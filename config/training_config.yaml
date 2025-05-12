@@ -1,0 +1,27 @@
+training:
+  model:
+    learning_rate: 1e-4
+    weight_decay: 1e-5
+    optimizer: "adamw"
+    scheduler: "cosine"
+    scheduler_params:
+      T_max: 100
+      eta_min: 1e-6
+  distributed:
+    num_workers: 4
+    use_gpu: true
+    resources_per_worker:
+      CPU: 1
+      GPU: 1
+  checkpointing:
+    save_top_k: 3
+    monitor: "val_loss"
+    mode: "min"
+  early_stopping:
+    patience: 5
+    monitor: "val_loss"
+    mode: "min"
+  logging:
+    log_every_n_steps: 50
+    log_gpu_memory: true
+    log_model_summary: true 
