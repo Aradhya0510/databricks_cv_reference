@@ -1,10 +1,10 @@
 # Databricks Computer Vision Architecture
 
-A comprehensive computer vision solution built on Databricks, providing end-to-end capabilities for data processing, model training, evaluation, and deployment.
+A comprehensive computer vision solution built on Databricks, providing end-to-end capabilities for data processing, model training, evaluation, and deployment. This architecture supports HuggingFace models, Albumentations transforms, and strict data validation using Pydantic.
 
 ## Architecture Overview
 
-This architecture is designed to handle computer vision tasks on Databricks, leveraging distributed computing capabilities and integrated ML tools. The solution supports:
+This architecture is designed to handle computer vision tasks on Databricks, leveraging distributed computing capabilities, HuggingFace models, and integrated ML tools. The solution supports:
 
 - Image classification
 - Object detection
@@ -16,28 +16,40 @@ This architecture is designed to handle computer vision tasks on Databricks, lev
 1. **Data Processing Pipeline**
    - MS COCO format support
    - Distributed data processing
-   - Data validation and quality checks
+   - Pydantic data validation
    - Delta Lake integration
 
-2. **Model Training**
+2. **Model Management**
+   - HuggingFace model integration
+   - Pretrained model support
+   - Model factory pattern
+   - Type-safe model configuration
+
+3. **Transforms**
+   - Albumentations integration
+   - Task-specific transform pipelines
+   - Configurable augmentation strategies
+   - Custom transform support
+
+4. **Training Framework**
    - PyTorch Lightning integration
    - Ray distributed training
    - Multi-GPU support
    - Hyperparameter tuning
 
-3. **Experiment Tracking**
+5. **Experiment Tracking**
    - MLflow integration
    - Comprehensive metrics logging
    - Model versioning
    - Artifact management
 
-4. **Evaluation Framework**
+6. **Evaluation Framework**
    - Task-specific metrics
    - Visualization tools
    - Performance analysis
    - A/B testing support
 
-5. **Model Deployment**
+7. **Model Deployment**
    - Databricks Model Serving
    - CI/CD pipeline
    - Monitoring and logging
@@ -111,7 +123,7 @@ pipeline = DeploymentPipeline(workspace_url, token, model_name, experiment_name)
 pipeline.run_pipeline(metrics_threshold)
 ```
 
-## Project Structure 
+## Project Structure
 
 ## Documentation
 
