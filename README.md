@@ -69,7 +69,7 @@ This architecture is designed to handle computer vision tasks on Databricks, lev
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/your-org/databricks-cv-architecture.git
+git clone https://github.com/Aradhya0510/databricks-cv-architecture.git
 cd databricks-cv-architecture
 ```
 
