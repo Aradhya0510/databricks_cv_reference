@@ -5,11 +5,17 @@ import pycocotools.coco as coco
 import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, ArrayType, FloatType
+from ..unity_catalog.catalog_manager import CatalogManager
 
 class COCOProcessor:
-    def __init__(self, spark: SparkSession):
+    def __init__(
+        self,
+        spark: SparkSession,
+        catalog_manager: Optional[CatalogManager] = None
+    ):
         self.spark = spark
         self.coco_api = None
+        self.catalog_manager = catalog_manager
         
     def load_coco_annotations(self, annotation_file: str) -> None:
         """Load COCO format annotations."""
@@ -82,9 +88,43 @@ class COCOProcessor:
             
         return validation_results
     
-    def save_to_delta(self, df: 'pyspark.sql.DataFrame', output_path: str) -> None:
-        """Save processed data to Delta Lake format."""
+    def save_to_delta(self, df: 'pyspark.sql.DataFrame', output_path: str, table_name: Optional[str] = None) -> None:
+        """Save processed data to Delta Lake format and optionally register in Unity Catalog."""
+        # Save to Delta Lake
         df.write.format("delta") \
             .mode("overwrite") \
             .option("overwriteSchema", "true") \
-            .save(output_path) 
+            .save(output_path)
+            
+        # Register in Unity Catalog if catalog_manager is provided
+        if self.catalog_manager and table_name:
+            self.catalog_manager.create_coco_table(
+                table_name=table_name,
+                location=output_path,
+                comment="Processed COCO dataset with annotations"
+            )
+            
+    def save_batch_inference_results(
+        self,
+        df: 'pyspark.sql.DataFrame',
+        output_path: str,
+        table_name: str,
+        model_name: str,
+        version: str
+    ) -> None:
+        """Save batch inference results to Delta Lake and register in Unity Catalog."""
+        if not self.catalog_manager:
+            raise ValueError("CatalogManager is required for saving batch inference results")
+            
+        # Save to Delta Lake
+        df.write.format("delta") \
+            .mode("overwrite") \
+            .option("overwriteSchema", "true") \
+            .save(output_path)
+            
+        # Register in Unity Catalog
+        self.catalog_manager.create_coco_table(
+            table_name=table_name,
+            location=output_path,
+            comment=f"Batch inference results for {model_name} version {version}"
+        ) 
