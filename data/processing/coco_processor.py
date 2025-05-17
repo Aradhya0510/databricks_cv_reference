@@ -39,6 +39,15 @@ class COCOProcessor:
             ann_ids = self.coco_api.getAnnIds(imgIds=img_id)
             anns = self.coco_api.loadAnns(ann_ids)
             
+            # Convert bbox values to float
+            for ann in anns:
+                ann['bbox'] = [float(x) for x in ann['bbox']]
+                # Convert segmentation points to float if they exist
+                if 'segmentation' in ann:
+                    ann['segmentation'] = [[float(x) for x in seg] for seg in ann['segmentation']]
+                # Convert area to float
+                ann['area'] = float(ann['area'])
+            
             image_data = {
                 'image_id': img_id,
                 'file_name': img_info['file_name'],
