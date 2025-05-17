@@ -21,8 +21,15 @@ class COCOProcessor:
         """Load COCO format annotations."""
         self.coco_api = coco.COCO(annotation_file)
         
-    def process_images(self, image_dir: str) -> pd.DataFrame:
-        """Process images and create a DataFrame with image metadata."""
+    def process_images(self, image_dir: str) -> 'pyspark.sql.DataFrame':
+        """Process images and create a Spark DataFrame with image metadata.
+        
+        Args:
+            image_dir: Directory containing the images
+            
+        Returns:
+            pyspark.sql.DataFrame: DataFrame containing image metadata and annotations
+        """
         if not self.coco_api:
             raise ValueError("COCO annotations not loaded. Call load_coco_annotations first.")
             
@@ -41,7 +48,10 @@ class COCOProcessor:
             }
             images.append(image_data)
             
-        return pd.DataFrame(images)
+        # Convert to pandas DataFrame first (for easier list handling)
+        pdf = pd.DataFrame(images)
+        # Convert to Spark DataFrame with proper schema
+        return self.create_spark_dataframe(pdf)
     
     def create_spark_dataframe(self, df: pd.DataFrame) -> 'pyspark.sql.DataFrame':
         """Convert pandas DataFrame to Spark DataFrame with proper schema."""
