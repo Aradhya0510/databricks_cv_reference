@@ -42,9 +42,14 @@ class COCOProcessor:
             # Convert bbox values to float
             for ann in anns:
                 ann['bbox'] = [float(x) for x in ann['bbox']]
-                # Convert segmentation points to float if they exist
+                # Convert segmentation points to float if they exist and are in polygon format
                 if 'segmentation' in ann:
-                    ann['segmentation'] = [[float(x) for x in seg] for seg in ann['segmentation']]
+                    if isinstance(ann['segmentation'], list):
+                        # Handle polygon format
+                        ann['segmentation'] = [[float(x) for x in seg] for seg in ann['segmentation']]
+                    else:
+                        # Handle RLE format - keep as is
+                        ann['segmentation'] = ann['segmentation']
                 # Convert area to float
                 ann['area'] = float(ann['area'])
             
