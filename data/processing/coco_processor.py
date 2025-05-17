@@ -4,7 +4,7 @@ from pathlib import Path
 import pycocotools.coco as coco
 import pandas as pd
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType, FloatType
+from pyspark.sql.types import StructType, StructField, StringType, ArrayType, FloatType, IntegerType
 from ..unity_catalog.catalog_manager import CatalogManager
 
 class COCOProcessor:
@@ -56,18 +56,18 @@ class COCOProcessor:
     def create_spark_dataframe(self, df: pd.DataFrame) -> 'pyspark.sql.DataFrame':
         """Convert pandas DataFrame to Spark DataFrame with proper schema."""
         schema = StructType([
-            StructField('image_id', StringType(), False),
+            StructField('image_id', IntegerType(), False),
             StructField('file_name', StringType(), False),
-            StructField('width', FloatType(), False),
-            StructField('height', FloatType(), False),
+            StructField('width', IntegerType(), False),
+            StructField('height', IntegerType(), False),
             StructField('annotations', ArrayType(
                 StructType([
-                    StructField('id', StringType(), False),
-                    StructField('category_id', StringType(), False),
+                    StructField('id', IntegerType(), False),
+                    StructField('category_id', IntegerType(), False),
                     StructField('bbox', ArrayType(FloatType()), False),
                     StructField('segmentation', ArrayType(ArrayType(FloatType())), False),
                     StructField('area', FloatType(), False),
-                    StructField('iscrowd', FloatType(), False)
+                    StructField('iscrowd', IntegerType(), False)
                 ])
             ), False)
         ])
