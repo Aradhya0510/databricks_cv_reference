@@ -42,14 +42,14 @@ class COCOProcessor:
             # Convert bbox values to float
             for ann in anns:
                 ann['bbox'] = [float(x) for x in ann['bbox']]
-                # Convert segmentation points to float if they exist and are in polygon format
+                # Convert segmentation to string representation
                 if 'segmentation' in ann:
                     if isinstance(ann['segmentation'], list):
-                        # Handle polygon format
-                        ann['segmentation'] = [[float(x) for x in seg] for seg in ann['segmentation']]
+                        # Convert polygon format to string
+                        ann['segmentation'] = str(ann['segmentation'])
                     else:
-                        # Handle RLE format - keep as is
-                        ann['segmentation'] = ann['segmentation']
+                        # Keep RLE format as is
+                        ann['segmentation'] = str(ann['segmentation'])
                 # Convert area to float
                 ann['area'] = float(ann['area'])
             
@@ -79,7 +79,7 @@ class COCOProcessor:
                     StructField('id', LongType(), False),
                     StructField('category_id', IntegerType(), False),
                     StructField('bbox', ArrayType(FloatType()), False),
-                    StructField('segmentation', ArrayType(ArrayType(FloatType())), False),
+                    StructField('segmentation', StringType(), False),
                     StructField('area', FloatType(), False),
                     StructField('iscrowd', IntegerType(), False)
                 ])
