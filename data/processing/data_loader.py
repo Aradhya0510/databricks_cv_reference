@@ -5,6 +5,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
 from PIL import Image
+import io
 
 class COCODataset(Dataset):
     def __init__(
@@ -12,26 +13,57 @@ class COCODataset(Dataset):
         image_paths: List[str],
         annotations: List[Dict],
         transform: Optional[A.Compose] = None,
-        task: str = 'detection'
+        task: str = 'detection',
+        use_binary: bool = False
     ):
         self.image_paths = image_paths
         self.annotations = annotations
         self.transform = transform
         self.task = task
+        self.use_binary = use_binary
         
     def __len__(self) -> int:
         return len(self.image_paths)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Dict]:
-        image = Image.open(self.image_paths[idx]).convert('RGB')
+        # Load image
+        if self.use_binary:
+            # Load from binary data
+            image = Image.open(io.BytesIO(self.image_paths[idx])).convert('RGB')
+        else:
+            # Load from file path
+            image = Image.open(self.image_paths[idx]).convert('RGB')
         image = np.array(image)
         
-        target = self.annotations[idx]
+        # Get annotations for this image
+        anns = self.annotations[idx]
+        
+        # Prepare target dictionary
+        target = {
+            'image_id': anns['image_id'],
+            'boxes': [],
+            'labels': [],
+            'area': [],
+            'iscrowd': []
+        }
+        
+        # Process annotations
+        for ann in anns['annotations']:
+            target['boxes'].append(ann['bbox'])
+            target['labels'].append(ann['category_id'])
+            target['area'].append(ann['area'])
+            target['iscrowd'].append(ann['iscrowd'])
+        
+        # Convert lists to tensors
+        target['boxes'] = torch.as_tensor(target['boxes'], dtype=torch.float32)
+        target['labels'] = torch.as_tensor(target['labels'], dtype=torch.int64)
+        target['area'] = torch.as_tensor(target['area'], dtype=torch.float32)
+        target['iscrowd'] = torch.as_tensor(target['iscrowd'], dtype=torch.int64)
         
         if self.transform:
-            transformed = self.transform(image=image, bboxes=target['bboxes'])
+            transformed = self.transform(image=image, bboxes=target['boxes'].tolist())
             image = transformed['image']
-            target['bboxes'] = transformed['bboxes']
+            target['boxes'] = torch.as_tensor(transformed['bboxes'], dtype=torch.float32)
             
         return image, target
 
@@ -39,7 +71,7 @@ def get_transforms(mode: str = 'train') -> A.Compose:
     """Get data augmentation transforms."""
     if mode == 'train':
         return A.Compose([
-            A.RandomResizedCrop(height=512, width=512, scale=(0.8, 1.0)),
+            A.RandomResizedCrop(size=(512, 512), scale=(0.8, 1.0)),
             A.HorizontalFlip(p=0.5),
             A.RandomBrightnessContrast(p=0.2),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -47,7 +79,7 @@ def get_transforms(mode: str = 'train') -> A.Compose:
         ])
     else:
         return A.Compose([
-            A.Resize(height=512, width=512),
+            A.Resize(size=(512, 512)),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ])

@@ -1,11 +1,13 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import json
 from pathlib import Path
 import pycocotools.coco as coco
 import pandas as pd
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType, FloatType, IntegerType, LongType
+from pyspark.sql.types import StructType, StructField, StringType, ArrayType, FloatType, IntegerType, LongType, BinaryType
 from ..unity_catalog.catalog_manager import CatalogManager
+from PIL import Image
+import io
 
 class COCOProcessor:
     def __init__(
@@ -53,9 +55,13 @@ class COCOProcessor:
                 # Convert area to float
                 ann['area'] = float(ann['area'])
             
+            # Create full image path
+            full_image_path = str(Path(image_dir) / img_info['file_name'])
+            
             image_data = {
                 'image_id': img_id,
                 'file_name': img_info['file_name'],
+                'image_path': full_image_path,  # Add full path
                 'width': img_info['width'],
                 'height': img_info['height'],
                 'annotations': anns
@@ -72,6 +78,7 @@ class COCOProcessor:
         schema = StructType([
             StructField('image_id', LongType(), False),
             StructField('file_name', StringType(), False),
+            StructField('image_path', StringType(), False),  # Add image_path field
             StructField('width', IntegerType(), False),
             StructField('height', IntegerType(), False),
             StructField('annotations', ArrayType(
@@ -112,21 +119,47 @@ class COCOProcessor:
             
         return validation_results
     
-    def save_to_delta(self, df: 'pyspark.sql.DataFrame', output_path: str, table_name: Optional[str] = None) -> None:
-        """Save processed data to Delta Lake format and optionally register in Unity Catalog."""
-        # Save to Delta Lake
+    def save_to_delta(
+        self,
+        df: 'pyspark.sql.DataFrame',
+        catalog_name: str,
+        schema_name: str,
+        table_name: str,
+        comment: Optional[str] = None
+    ) -> None:
+        """Save processed data to Delta Lake format and register in Unity Catalog.
+        
+        Args:
+            df: Spark DataFrame to save
+            catalog_name: Name of the catalog in Unity Catalog
+            schema_name: Name of the schema in Unity Catalog
+            table_name: Name of the table in Unity Catalog
+            comment: Optional comment for the table
+        """
+        if not self.catalog_manager:
+            raise ValueError("CatalogManager is required for Unity Catalog integration")
+            
+        # Create full table path
+        table_path = f"{catalog_name}.{schema_name}.{table_name}"
+        
+        # Save to Delta Lake with Unity Catalog
         df.write.format("delta") \
             .mode("overwrite") \
             .option("overwriteSchema", "true") \
-            .save(output_path)
+            .saveAsTable(table_path)
             
-        # Register in Unity Catalog if catalog_manager is provided
-        if self.catalog_manager and table_name:
-            self.catalog_manager.create_coco_table(
-                table_name=table_name,
-                location=output_path,
-                comment="Processed COCO dataset with annotations"
+        # Add table properties and comment
+        if comment:
+            self.spark.sql(f"COMMENT ON TABLE {table_path} IS '{comment}'")
+            
+        # Add table properties for better performance
+        self.spark.sql(f"""
+            ALTER TABLE {table_path} 
+            SET TBLPROPERTIES (
+                'delta.autoOptimize.optimizeWrite' = 'true',
+                'delta.autoOptimize.autoCompact' = 'true'
             )
+        """)
             
     def save_batch_inference_results(
         self,
@@ -151,4 +184,84 @@ class COCOProcessor:
             table_name=table_name,
             location=output_path,
             comment=f"Batch inference results for {model_name} version {version}"
-        ) 
+        )
+
+    def process_images_with_binary(
+        self,
+        image_dir: str,
+        max_image_size: Optional[Tuple[int, int]] = None
+    ) -> 'pyspark.sql.DataFrame':
+        """Process images and create a Spark DataFrame with image metadata and binary image data.
+        
+        Args:
+            image_dir: Directory containing the images
+            max_image_size: Optional tuple of (width, height) to resize images before storage
+            
+        Returns:
+            pyspark.sql.DataFrame: DataFrame containing image metadata, annotations, and binary image data
+        """
+        if not self.coco_api:
+            raise ValueError("COCO annotations not loaded. Call load_coco_annotations first.")
+            
+        images = []
+        for img_id in self.coco_api.getImgIds():
+            img_info = self.coco_api.loadImgs(img_id)[0]
+            ann_ids = self.coco_api.getAnnIds(imgIds=img_id)
+            anns = self.coco_api.loadAnns(ann_ids)
+            
+            # Load and process image
+            image_path = Path(image_dir) / img_info['file_name']
+            with Image.open(image_path) as img:
+                if max_image_size:
+                    img = img.resize(max_image_size, Image.Resampling.LANCZOS)
+                # Convert to bytes
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format=img.format or 'JPEG')
+                img_bytes = img_byte_arr.getvalue()
+            
+            # Process annotations
+            for ann in anns:
+                ann['bbox'] = [float(x) for x in ann['bbox']]
+                if 'segmentation' in ann:
+                    if isinstance(ann['segmentation'], list):
+                        ann['segmentation'] = str(ann['segmentation'])
+                    else:
+                        ann['segmentation'] = str(ann['segmentation'])
+                ann['area'] = float(ann['area'])
+            
+            image_data = {
+                'image_id': img_id,
+                'file_name': img_info['file_name'],
+                'width': img_info['width'],
+                'height': img_info['height'],
+                'annotations': anns,
+                'image_data': img_bytes
+            }
+            images.append(image_data)
+            
+        # Convert to pandas DataFrame
+        pdf = pd.DataFrame(images)
+        # Convert to Spark DataFrame with proper schema
+        return self.create_spark_dataframe_with_binary(pdf)
+        
+    def create_spark_dataframe_with_binary(self, df: pd.DataFrame) -> 'pyspark.sql.DataFrame':
+        """Convert pandas DataFrame to Spark DataFrame with binary image data."""
+        schema = StructType([
+            StructField('image_id', LongType(), False),
+            StructField('file_name', StringType(), False),
+            StructField('width', IntegerType(), False),
+            StructField('height', IntegerType(), False),
+            StructField('annotations', ArrayType(
+                StructType([
+                    StructField('id', LongType(), False),
+                    StructField('category_id', IntegerType(), False),
+                    StructField('bbox', ArrayType(FloatType()), False),
+                    StructField('segmentation', StringType(), False),
+                    StructField('area', FloatType(), False),
+                    StructField('iscrowd', IntegerType(), False)
+                ])
+            ), False),
+            StructField('image_data', BinaryType(), False)
+        ])
+        
+        return self.spark.createDataFrame(df, schema) 
