@@ -6,41 +6,67 @@ from albumentations.pytorch import ToTensorV2
 import numpy as np
 from PIL import Image
 import io
+import json
+from pathlib import Path
 
 class COCODataset(Dataset):
     def __init__(
         self,
-        image_paths: List[str],
-        annotations: List[Dict],
+        image_dir: str,
+        annotation_file: str,
         transform: Optional[A.Compose] = None,
-        task: str = 'detection',
-        use_binary: bool = False
+        task: str = 'detection'
     ):
-        self.image_paths = image_paths
-        self.annotations = annotations
+        """
+        Args:
+            image_dir: Directory with all the images
+            annotation_file: Path to the COCO format annotation file
+            transform: Optional transform to be applied on images and boxes
+            task: 'detection' or 'segmentation'
+        """
+        self.image_dir = Path(image_dir)
         self.transform = transform
         self.task = task
-        self.use_binary = use_binary
+        
+        # Load annotations
+        with open(annotation_file, 'r') as f:
+            self.coco_data = json.load(f)
+            
+        # Create image id to annotations mapping
+        self.img_to_anns = {}
+        for ann in self.coco_data['annotations']:
+            img_id = ann['image_id']
+            if img_id not in self.img_to_anns:
+                self.img_to_anns[img_id] = []
+            self.img_to_anns[img_id].append(ann)
+            
+        # Create image id to image info mapping
+        self.img_to_info = {img['id']: img for img in self.coco_data['images']}
+        
+        # Get all image ids
+        self.ids = list(self.img_to_info.keys())
         
     def __len__(self) -> int:
-        return len(self.image_paths)
+        return len(self.ids)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Dict]:
+        # Get image id
+        img_id = self.ids[idx]
+        
+        # Get image info
+        img_info = self.img_to_info[img_id]
+        
         # Load image
-        if self.use_binary:
-            # Load from binary data
-            image = Image.open(io.BytesIO(self.image_paths[idx])).convert('RGB')
-        else:
-            # Load from file path
-            image = Image.open(self.image_paths[idx]).convert('RGB')
+        img_path = self.image_dir / img_info['file_name']
+        image = Image.open(img_path).convert('RGB')
         image = np.array(image)
         
         # Get annotations for this image
-        anns = self.annotations[idx]
+        anns = self.img_to_anns.get(img_id, [])
         
         # Prepare target dictionary
         target = {
-            'image_id': anns['image_id'],
+            'image_id': torch.tensor([img_id]),
             'boxes': [],
             'labels': [],
             'area': [],
@@ -48,22 +74,27 @@ class COCODataset(Dataset):
         }
         
         # Process annotations
-        for ann in anns['annotations']:
-            target['boxes'].append(ann['bbox'])
+        for ann in anns:
+            target['boxes'].append(ann['bbox'])  # [x, y, width, height]
             target['labels'].append(ann['category_id'])
             target['area'].append(ann['area'])
             target['iscrowd'].append(ann['iscrowd'])
         
-        # Convert lists to numpy arrays for albumentations
+        # Convert lists to numpy arrays
         target['boxes'] = np.array(target['boxes'], dtype=np.float32)
         target['labels'] = np.array(target['labels'], dtype=np.int64)
         target['area'] = np.array(target['area'], dtype=np.float32)
         target['iscrowd'] = np.array(target['iscrowd'], dtype=np.int64)
         
         if self.transform:
-            transformed = self.transform(image=image, bboxes=target['boxes'])
+            transformed = self.transform(
+                image=image,
+                bboxes=target['boxes'],
+                labels=target['labels']
+            )
             image = transformed['image']
             target['boxes'] = torch.as_tensor(transformed['bboxes'], dtype=torch.float32)
+            target['labels'] = torch.as_tensor(transformed['labels'], dtype=torch.int64)
         else:
             # Convert to tensors if no transform
             target['boxes'] = torch.as_tensor(target['boxes'], dtype=torch.float32)
@@ -77,7 +108,7 @@ def get_transforms(mode: str = 'train') -> A.Compose:
     """Get data augmentation transforms."""
     if mode == 'train':
         return A.Compose([
-            A.RandomResizedCrop(size=(512, 512), scale=(0.8, 1.0)),
+            A.RandomResizedCrop(height=800, width=800, scale=(0.8, 1.0)),
             A.HorizontalFlip(p=0.5),
             A.RandomBrightnessContrast(p=0.2),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -85,7 +116,7 @@ def get_transforms(mode: str = 'train') -> A.Compose:
         ], bbox_params=A.BboxParams(format='coco', label_fields=['labels']))
     else:
         return A.Compose([
-            A.Resize(size=(512, 512)),
+            A.Resize(height=800, width=800),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ], bbox_params=A.BboxParams(format='coco', label_fields=['labels']))
@@ -103,5 +134,6 @@ def create_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=True
+        persistent_workers=True,
+        collate_fn=lambda x: tuple(zip(*x))  # Add collate_fn to handle the tuple returns
     ) 
