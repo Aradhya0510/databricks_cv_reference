@@ -12,15 +12,12 @@ class CatalogManager:
     
     def __init__(
         self,
-        workspace_url: str,
-        token: str,
         catalog_name: str,
         schema_name: str
     ):
-        self.workspace = WorkspaceClient(
-            host=workspace_url,
-            token=token
-        )
+        # Initialize WorkspaceClient without explicit credentials
+        # It will automatically use the credentials from the Databricks environment
+        self.workspace = WorkspaceClient()
         self.catalog_name = catalog_name
         self.schema_name = schema_name
         

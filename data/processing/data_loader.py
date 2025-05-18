@@ -54,16 +54,22 @@ class COCODataset(Dataset):
             target['area'].append(ann['area'])
             target['iscrowd'].append(ann['iscrowd'])
         
-        # Convert lists to tensors
-        target['boxes'] = torch.as_tensor(target['boxes'], dtype=torch.float32)
-        target['labels'] = torch.as_tensor(target['labels'], dtype=torch.int64)
-        target['area'] = torch.as_tensor(target['area'], dtype=torch.float32)
-        target['iscrowd'] = torch.as_tensor(target['iscrowd'], dtype=torch.int64)
+        # Convert lists to numpy arrays for albumentations
+        target['boxes'] = np.array(target['boxes'], dtype=np.float32)
+        target['labels'] = np.array(target['labels'], dtype=np.int64)
+        target['area'] = np.array(target['area'], dtype=np.float32)
+        target['iscrowd'] = np.array(target['iscrowd'], dtype=np.int64)
         
         if self.transform:
-            transformed = self.transform(image=image, bboxes=target['boxes'].tolist())
+            transformed = self.transform(image=image, bboxes=target['boxes'])
             image = transformed['image']
             target['boxes'] = torch.as_tensor(transformed['bboxes'], dtype=torch.float32)
+        else:
+            # Convert to tensors if no transform
+            target['boxes'] = torch.as_tensor(target['boxes'], dtype=torch.float32)
+            target['labels'] = torch.as_tensor(target['labels'], dtype=torch.int64)
+            target['area'] = torch.as_tensor(target['area'], dtype=torch.float32)
+            target['iscrowd'] = torch.as_tensor(target['iscrowd'], dtype=torch.int64)
             
         return image, target
 
@@ -76,13 +82,13 @@ def get_transforms(mode: str = 'train') -> A.Compose:
             A.RandomBrightnessContrast(p=0.2),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
-        ])
+        ], bbox_params=A.BboxParams(format='coco', label_fields=['labels']))
     else:
         return A.Compose([
             A.Resize(size=(512, 512)),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
-        ])
+        ], bbox_params=A.BboxParams(format='coco', label_fields=['labels']))
 
 def create_dataloader(
     dataset: Dataset,
