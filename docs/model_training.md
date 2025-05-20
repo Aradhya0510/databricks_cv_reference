@@ -56,7 +56,7 @@ The `RayTrainer` class handles distributed training using Ray.
 #### Initialization
 
 ```python
-from models.training.ray_trainer import RayTrainer
+from trainer.ray_trainer import RayTrainer
 
 trainer = RayTrainer(
     model=BaseModel,

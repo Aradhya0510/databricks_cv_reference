@@ -128,7 +128,7 @@ processor.save_to_delta(
 
 2. Train and register a model:
 ```python
-from models.training.ray_trainer import RayTrainer
+from trainer.ray_trainer import RayTrainer
 from models.management.model_registry import ModelRegistry
 
 # Initialize model registry
