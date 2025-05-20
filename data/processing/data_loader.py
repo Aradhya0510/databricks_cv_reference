@@ -108,7 +108,7 @@ def get_transforms(mode: str = 'train') -> A.Compose:
     """Get data augmentation transforms."""
     if mode == 'train':
         return A.Compose([
-            A.RandomResizedCrop(height=800, width=800, scale=(0.8, 1.0)),
+            A.RandomResizedCrop(size=(800, 800), scale=(0.8, 1.0)),
             A.HorizontalFlip(p=0.5),
             A.RandomBrightnessContrast(p=0.2),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -116,7 +116,7 @@ def get_transforms(mode: str = 'train') -> A.Compose:
         ], bbox_params=A.BboxParams(format='coco', label_fields=['labels']))
     else:
         return A.Compose([
-            A.Resize(height=800, width=800),
+            A.Resize(size=(800, 800)),
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ], bbox_params=A.BboxParams(format='coco', label_fields=['labels']))
