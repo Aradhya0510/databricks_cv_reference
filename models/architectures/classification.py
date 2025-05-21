@@ -54,4 +54,7 @@ class ClassificationModel(nn.Module):
         Returns:
             Output tensor of shape (batch_size, num_classes)
         """
+        if isinstance(x, list):
+            x = x[0]
+            
         return self.backbone(x) 

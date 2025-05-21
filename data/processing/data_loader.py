@@ -45,6 +45,10 @@ class COCODataset(Dataset):
         
         # Get all image ids
         self.ids = list(self.img_to_info.keys())
+
+        # Filter out images without annotations
+        self.ids = [img_id for img_id in self.img_to_info.keys() 
+                    if img_id in self.img_to_anns and len(self.img_to_anns[img_id]) > 0]
         
     def __len__(self) -> int:
         return len(self.ids)
@@ -121,6 +125,30 @@ def get_transforms(mode: str = 'train') -> A.Compose:
             ToTensorV2()
         ], bbox_params=A.BboxParams(format='coco', label_fields=['labels']))
 
+def coco_collate_fn(batch):
+    """
+    Custom collate function for COCO dataset that properly batches images
+    while keeping targets as a list of dictionaries.
+    
+    Args:
+        batch: List of tuples (image, target)
+        
+    Returns:
+        images: Tensor of shape [batch_size, channels, height, width]
+        targets: List of dictionaries containing the annotations
+    """
+    images = []
+    targets = []
+    
+    for image, target in batch:
+        images.append(image)
+        targets.append(target)
+    
+    # Stack images into a single tensor
+    images = torch.stack(images)
+    
+    return images, targets
+
 def create_dataloader(
     dataset: Dataset,
     batch_size: int,
@@ -135,5 +163,6 @@ def create_dataloader(
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
-        collate_fn=lambda x: tuple(zip(*x))  # Add collate_fn to handle the tuple returns
+        collate_fn=coco_collate_fn
+        # collate_fn=lambda x: tuple(zip(*x))  # Add collate_fn to handle the tuple returns
     ) 

@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -16,6 +16,7 @@ class ModelConfig:
     optimizer: str = 'adamw'
     scheduler: Optional[str] = None
     scheduler_params: Optional[Dict[str, Any]] = None
+    max_epochs: int = 10  # Added default max_epochs
 
 class BaseModel(pl.LightningModule, ABC):
     """Base class for all computer vision models."""
@@ -83,16 +84,48 @@ class BaseModel(pl.LightningModule, ABC):
         scheduler_cls = schedulers.get(self.config.scheduler.lower())
         if not scheduler_cls:
             raise ValueError(f"Unsupported scheduler: {self.config.scheduler}")
-            
+        
+        # Get scheduler parameters from config or use defaults
+        scheduler_params = self.config.scheduler_params or {}
+        
+        # Handle specific required parameters for each scheduler type
+        if self.config.scheduler.lower() == 'cosine' and 'T_max' not in scheduler_params:
+            # Add T_max parameter for CosineAnnealingLR if not provided
+            scheduler_params['T_max'] = self.config.max_epochs
+        
+        elif self.config.scheduler.lower() == 'step' and 'step_size' not in scheduler_params:
+            # Add step_size parameter for StepLR if not provided
+            scheduler_params['step_size'] = self.config.max_epochs // 3
+        
+        elif self.config.scheduler.lower() == 'plateau' and 'mode' not in scheduler_params:
+            # Add mode parameter for ReduceLROnPlateau if not provided
+            scheduler_params['mode'] = 'min'
+        
         return scheduler_cls(
             optimizer,
-            **self.config.scheduler_params or {}
+            **scheduler_params
         )
+
+    def compute_loss(self, y_hat, targets):
+        # Check if we have any targets
+        if not targets:
+            # Return zero loss or some default value
+            return torch.tensor(0.0, device=y_hat.device, requires_grad=True)
+        
+        # Check if all targets have labels
+        valid_targets = [target for target in targets if len(target['labels']) > 0]
+        if not valid_targets:
+            return torch.tensor(0.0, device=y_hat.device, requires_grad=True)
+        
+        # Use stack for zero-dimensional tensors
+        labels = torch.stack([target['labels'][0] for target in valid_targets])
+        return torch.nn.functional.cross_entropy(y_hat, labels)
+
+
     
-    @abstractmethod
-    def compute_loss(self, y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Compute task-specific loss."""
-        pass
+    # def compute_loss(self, y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    #     """Default loss implementation - can be overridden by subclasses."""
+    #     return torch.nn.functional.cross_entropy(y_hat, y)
     
     def log_to_mlflow(self, metrics: Dict[str, float]) -> None:
         """Log metrics to MLflow."""
@@ -108,4 +141,4 @@ class BaseModel(pl.LightningModule, ABC):
                 torch.randn(1, 3, 224, 224),
                 self(torch.randn(1, 3, 224, 224))
             )
-        ) 
+        )

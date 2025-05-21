@@ -1,8 +1,8 @@
 from typing import Dict, Any, Optional
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from ..schemas.model import ModelConfig, ModelOutput
-from ..schemas.data import BatchData
+from schemas.model import ModelConfig, ModelOutput
+from schemas.data import BatchData
 import torch
 import mlflow
 
@@ -31,6 +31,10 @@ class BaseTrainer(pl.LightningModule):
             logits=outputs.logits if hasattr(outputs, 'logits') else None,
             features=outputs.hidden_states if hasattr(outputs, 'hidden_states') else None
         )
+
+    def get_model(self):
+        """Returns the PyTorch Lightning model for distributed training."""
+        return self.model  # Assuming your trainer has a model attribute
     
     def training_step(self, batch: BatchData, batch_idx: int) -> torch.Tensor:
         """Training step implementation."""
