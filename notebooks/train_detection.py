@@ -13,38 +13,29 @@ import pytorch_lightning as pl
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-from tasks.multitask.datamodule import MultitaskDataModule
+from tasks.detection.datamodule import DetectionDataModule
 from trainer.ray_trainer import RayTrainer
 
 # COMMAND ----------
 
 # Configure training parameters
 config = {
-    "task": "multitask",
-    "model_ckpt": "microsoft/resnet-50",
-    "num_labels": {
-        "classification": 1000,
-        "detection": 91,
-        "segmentation": 19
-    },
+    "task": "detection",
+    "model_ckpt": "facebook/detr-resnet-50",
+    "num_labels": 91,  # COCO has 91 classes
     "lr": 1e-4,
     "weight_decay": 1e-5,
-    "batch_size": 8,  # Smaller batch size for multitask
+    "batch_size": 8,  # Smaller batch size for detection
     "num_workers": 4,
     "epochs": 10,
-    "use_gpu": True,
-    "task_weights": {
-        "classification": 1.0,
-        "detection": 1.0,
-        "segmentation": 1.0
-    }
+    "use_gpu": True
 }
 
 # COMMAND ----------
 
 # Initialize MLflow
 mlflow.set_tracking_uri("databricks")
-mlflow.set_experiment(f"/Users/{dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get()}/cv_multitask")
+mlflow.set_experiment(f"/Users/{dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get()}/cv_detection")
 
 # COMMAND ----------
 
@@ -52,7 +43,6 @@ mlflow.set_experiment(f"/Users/{dbutils.notebook.entry_point.getDbutils().notebo
 train_transform = A.Compose([
     A.RandomResizedCrop(800, 800),
     A.HorizontalFlip(),
-    A.RandomBrightnessContrast(),
     A.Normalize(),
     ToTensorV2()
 ])
@@ -66,7 +56,7 @@ val_transform = A.Compose([
 # COMMAND ----------
 
 # Initialize data module
-data_module = MultitaskDataModule(
+data_module = DetectionDataModule(
     train_image_dir="/dbfs/path/to/train/images",
     train_annotation_file="/dbfs/path/to/train/annotations.json",
     val_image_dir="/dbfs/path/to/val/images",
@@ -87,8 +77,7 @@ trainer = RayTrainer(
     use_gpu=config["use_gpu"],
     num_labels=config["num_labels"],
     lr=config["lr"],
-    weight_decay=config["weight_decay"],
-    task_weights=config["task_weights"]
+    weight_decay=config["weight_decay"]
 )
 
 # COMMAND ----------
@@ -96,7 +85,7 @@ trainer = RayTrainer(
 # Configure training
 training_config = {
     "experiment_name": mlflow.active_run().info.experiment_name,
-    "run_name": "multitask_training",
+    "run_name": "detection_training",
     "max_epochs": config["epochs"],
     "checkpoint_dir": "/dbfs/path/to/checkpoints",
     "model_path": "/dbfs/path/to/model",
@@ -118,10 +107,7 @@ if False:  # Set to True to run hyperparameter search
     search_space = {
         "lr": tune.loguniform(1e-4, 1e-2),
         "weight_decay": tune.loguniform(1e-5, 1e-3),
-        "batch_size": tune.choice([4, 8, 16]),
-        "task_weights.classification": tune.uniform(0.5, 2.0),
-        "task_weights.detection": tune.uniform(0.5, 2.0),
-        "task_weights.segmentation": tune.uniform(0.5, 2.0)
+        "batch_size": tune.choice([4, 8, 16])
     }
     
     # Initialize trainer with search space

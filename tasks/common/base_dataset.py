@@ -7,6 +7,7 @@ from PIL import Image
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
+from pycocotools.coco import COCO
 
 class BaseVisionDataset(Dataset):
     """Base dataset class for vision tasks using COCO format."""
@@ -33,31 +34,17 @@ class BaseVisionDataset(Dataset):
             ToTensorV2()
         ])
         
-        # Load annotations
-        with open(annotation_file, 'r') as f:
-            self.coco_data = json.load(f)
+        # Initialize COCO API
+        self.coco = COCO(annotation_file)
         
-        # Create image_id to annotations mapping
-        self.image_annotations = {}
-        for ann in self.coco_data['annotations']:
-            if ann['image_id'] not in self.image_annotations:
-                self.image_annotations[ann['image_id']] = []
-            self.image_annotations[ann['image_id']].append(ann)
-        
-        # Create image_id to filename mapping
-        self.image_id_to_file = {
-            img['id']: img['file_name']
-            for img in self.coco_data['images']
-        }
+        # Get all image IDs that have annotations
+        self.image_ids = list(sorted(self.coco.getImgIds()))
         
         # Create category mapping
         self.label_map = label_map or {
             cat['id']: cat['name']
-            for cat in self.coco_data['categories']
+            for cat in self.coco.loadCats(self.coco.getCatIds())
         }
-        
-        # Get unique image IDs
-        self.image_ids = list(self.image_annotations.keys())
 
     def __len__(self) -> int:
         return len(self.image_ids)
@@ -71,7 +58,9 @@ class BaseVisionDataset(Dataset):
         Returns:
             Preprocessed image as numpy array
         """
-        image_path = os.path.join(self.image_dir, self.image_id_to_file[image_id])
+        # Get image info from COCO
+        img_info = self.coco.loadImgs(image_id)[0]
+        image_path = os.path.join(self.image_dir, img_info['file_name'])
         image = Image.open(image_path).convert('RGB')
         return np.array(image)
 
@@ -84,4 +73,45 @@ class BaseVisionDataset(Dataset):
         Returns:
             List of annotations for the image
         """
-        return self.image_annotations[image_id] 
+        return self.coco.loadAnns(self.coco.getAnnIds(imgIds=image_id))
+
+    def get_image_info(self, image_id: int) -> Dict[str, Any]:
+        """Get image information.
+        
+        Args:
+            image_id: ID of the image
+            
+        Returns:
+            Dictionary containing image information
+        """
+        return self.coco.loadImgs(image_id)[0]
+
+    def get_category_info(self, category_id: int) -> Dict[str, Any]:
+        """Get category information.
+        
+        Args:
+            category_id: ID of the category
+            
+        Returns:
+            Dictionary containing category information
+        """
+        return self.coco.loadCats(category_id)[0]
+
+    def get_category_ids(self) -> List[int]:
+        """Get all category IDs.
+        
+        Returns:
+            List of category IDs
+        """
+        return self.coco.getCatIds()
+
+    def get_image_ids_by_category(self, category_id: int) -> List[int]:
+        """Get image IDs containing a specific category.
+        
+        Args:
+            category_id: ID of the category
+            
+        Returns:
+            List of image IDs containing the category
+        """
+        return self.coco.getImgIds(catIds=category_id) 
