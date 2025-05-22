@@ -3,22 +3,24 @@ import ray
 from ray import train
 from ray.train.torch import TorchTrainer
 from ray.train import ScalingConfig
-from .base_trainer import BaseTrainer
+from models.base.base_model import BaseModel
 from ..schemas.model import ModelConfig
 from ..schemas.data import BatchData
 import mlflow
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
 class RayTrainer:
     """Distributed trainer using Ray."""
     
     def __init__(
         self,
-        trainer: BaseTrainer,
+        model: BaseModel,
         num_workers: int = 4,
         use_gpu: bool = True,
         resources_per_worker: Optional[Dict[str, float]] = None
     ):
-        self.trainer = trainer
+        self.model = model
         self.num_workers = num_workers
         self.use_gpu = use_gpu
         self.resources_per_worker = resources_per_worker or {"CPU": 1}
@@ -35,7 +37,7 @@ class RayTrainer:
             mlflow.log_params(config)
             
             # Prepare model and data
-            model = train.torch.prepare_model(self.trainer)
+            model = train.torch.prepare_model(self.model)
             train_loader = train.torch.prepare_data_loader(config["train_loader"])
             val_loader = train.torch.prepare_data_loader(config["val_loader"])
             
