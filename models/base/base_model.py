@@ -6,6 +6,8 @@ import mlflow.pytorch
 from mlflow.models import infer_signature
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
+from ..schemas.model import ModelConfig, ModelOutput
+from ..schemas.data import BatchData
 
 @dataclass
 class ModelConfig:
@@ -26,23 +28,26 @@ class BaseModel(pl.LightningModule, ABC):
         self.config = config
         self.save_hyperparameters()
         
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> ModelOutput:
         """Forward pass through the model."""
-        return self.model(x)
+        outputs = self.model(x)
+        return ModelOutput(
+            predictions=outputs.logits if hasattr(outputs, 'logits') else outputs,
+            logits=outputs.logits if hasattr(outputs, 'logits') else None,
+            features=outputs.hidden_states if hasattr(outputs, 'hidden_states') else None
+        )
     
-    def training_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch: BatchData, batch_idx: int) -> torch.Tensor:
         """Training step implementation."""
-        x, y = batch
-        y_hat = self(x)
-        loss = self.compute_loss(y_hat, y)
+        outputs = self(batch.images)
+        loss = self.compute_loss(outputs, batch.targets)
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
     
-    def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
+    def validation_step(self, batch: BatchData, batch_idx: int) -> None:
         """Validation step implementation."""
-        x, y = batch
-        y_hat = self(x)
-        loss = self.compute_loss(y_hat, y)
+        outputs = self(batch.images)
+        loss = self.compute_loss(outputs, batch.targets)
         self.log('val_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         
     def configure_optimizers(self) -> torch.optim.Optimizer:
@@ -90,7 +95,7 @@ class BaseModel(pl.LightningModule, ABC):
         )
     
     @abstractmethod
-    def compute_loss(self, y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    def compute_loss(self, outputs: ModelOutput, targets: Any) -> torch.Tensor:
         """Compute task-specific loss."""
         pass
     

@@ -3,27 +3,41 @@ import ray
 from ray import train
 from ray.train.torch import TorchTrainer
 from ray.train import ScalingConfig
-from .base_trainer import BaseTrainer
-from ..schemas.model import ModelConfig
-from ..schemas.data import BatchData
+from tasks.common.factory import make_module
 import mlflow
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
 class RayTrainer:
     """Distributed trainer using Ray."""
     
     def __init__(
         self,
-        trainer: BaseTrainer,
+        task: str,
+        model_ckpt: str,
         num_workers: int = 4,
         use_gpu: bool = True,
-        resources_per_worker: Optional[Dict[str, float]] = None
+        resources_per_worker: Optional[Dict[str, float]] = None,
+        **kwargs
     ):
-        self.trainer = trainer
+        """Initialize Ray trainer.
+        
+        Args:
+            task: One of "classification", "detection", "segmentation"
+            model_ckpt: Path to model checkpoint or HuggingFace model ID
+            num_workers: Number of Ray workers
+            use_gpu: Whether to use GPU
+            resources_per_worker: Resources per worker
+            **kwargs: Additional arguments passed to make_module
+        """
+        self.task = task
+        self.model_ckpt = model_ckpt
         self.num_workers = num_workers
         self.use_gpu = use_gpu
         self.resources_per_worker = resources_per_worker or {"CPU": 1}
         if use_gpu:
             self.resources_per_worker["GPU"] = 1
+        self.kwargs = kwargs
     
     def train_func(self, config: Dict[str, Any]):
         """Training function executed on each worker."""
@@ -34,8 +48,15 @@ class RayTrainer:
             # Log parameters
             mlflow.log_params(config)
             
+            # Create module using factory
+            module = make_module(
+                task=self.task,
+                model_ckpt=self.model_ckpt,
+                **self.kwargs
+            )
+            
             # Prepare model and data
-            model = train.torch.prepare_model(self.trainer)
+            model = train.torch.prepare_model(module)
             train_loader = train.torch.prepare_data_loader(config["train_loader"])
             val_loader = train.torch.prepare_data_loader(config["val_loader"])
             
