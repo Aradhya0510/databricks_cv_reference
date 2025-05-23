@@ -7,6 +7,8 @@ from tasks.common.factory import make_module
 import mlflow
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+import os
+import sys
 
 class RayTrainer:
     """Distributed trainer using Ray."""
@@ -41,6 +43,10 @@ class RayTrainer:
     
     def train_func(self, config: Dict[str, Any]):
         """Training function executed on each worker."""
+        # Add project root to Python path
+        if "project_root" in config:
+            sys.path.append(config["project_root"])
+        
         mlflow.set_tracking_uri("databricks")
         mlflow.set_experiment(config["experiment_name"])
         

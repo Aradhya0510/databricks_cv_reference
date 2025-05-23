@@ -7,11 +7,16 @@
 # COMMAND ----------
 
 import os
+import sys
 import mlflow
 import torch
 import pytorch_lightning as pl
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+
+# Add project root to Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(project_root)
 
 from tasks.detection.datamodule import DetectionDataModule
 from trainer.ray_trainer import RayTrainer
@@ -33,9 +38,8 @@ config = {
 
 # COMMAND ----------
 
-# Initialize MLflow
-mlflow.set_tracking_uri("databricks")
-mlflow.set_experiment(f"/Users/{dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get()}/cv_detection")
+# Define experiment name
+experiment_name = f"/Users/{dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get()}/cv_detection"
 
 # COMMAND ----------
 
@@ -84,13 +88,14 @@ trainer = RayTrainer(
 
 # Configure training
 training_config = {
-    "experiment_name": mlflow.active_run().info.experiment_name,
+    "experiment_name": experiment_name,
     "run_name": "detection_training",
     "max_epochs": config["epochs"],
     "checkpoint_dir": "/dbfs/path/to/checkpoints",
     "model_path": "/dbfs/path/to/model",
     "train_loader": data_module.train_dataloader(),
-    "val_loader": data_module.val_dataloader()
+    "val_loader": data_module.val_dataloader(),
+    "project_root": project_root  # Pass project root to Ray workers
 }
 
 # COMMAND ----------
