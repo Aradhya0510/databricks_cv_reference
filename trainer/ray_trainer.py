@@ -3,6 +3,8 @@ import ray
 from ray import train
 from ray.train.torch import TorchTrainer
 from ray.train import ScalingConfig
+from ray.air import RunConfig
+from ray.air.integrations.mlflow import MLflowLoggerCallback
 from tasks.common.factory import make_module
 import mlflow
 import pytorch_lightning as pl
@@ -43,10 +45,6 @@ class RayTrainer:
     
     def train_func(self, config: Dict[str, Any]):
         """Training function executed on each worker."""
-        # Add project root to Python path
-        if "project_root" in config:
-            sys.path.append(config["project_root"])
-        
         mlflow.set_tracking_uri("databricks")
         mlflow.set_experiment(config["experiment_name"])
         
@@ -103,16 +101,40 @@ class RayTrainer:
     
     def train(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Start distributed training."""
+        # Get the absolute path to the project root
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        
+        # Create runtime environment
+        runtime_env = {
+            "working_dir": project_root,
+            "py_modules": ["tasks", "trainer"]
+        }
+        
+        # Create scaling config
         scaling_config = ScalingConfig(
             num_workers=self.num_workers,
             use_gpu=self.use_gpu,
             resources_per_worker=self.resources_per_worker
         )
         
+        # Create run config with MLflow integration
+        run_config = RunConfig(
+            callbacks=[
+                MLflowLoggerCallback(
+                    tracking_uri="databricks",
+                    experiment_name=config["experiment_name"],
+                    run_name=config["run_name"]
+                )
+            ]
+        )
+        
+        # Initialize trainer with runtime environment
         trainer = TorchTrainer(
             train_loop_per_worker=self.train_func,
             train_loop_config=config,
-            scaling_config=scaling_config
+            scaling_config=scaling_config,
+            run_config=run_config,
+            runtime_env=runtime_env
         )
         
         result = trainer.fit()

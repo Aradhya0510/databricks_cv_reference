@@ -7,16 +7,11 @@
 # COMMAND ----------
 
 import os
-import sys
 import mlflow
 import torch
 import pytorch_lightning as pl
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-
-# Add project root to Python path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(project_root)
 
 from tasks.detection.datamodule import DetectionDataModule
 from trainer.ray_trainer import RayTrainer
@@ -94,8 +89,7 @@ training_config = {
     "checkpoint_dir": "/dbfs/path/to/checkpoints",
     "model_path": "/dbfs/path/to/model",
     "train_loader": data_module.train_dataloader(),
-    "val_loader": data_module.val_dataloader(),
-    "project_root": project_root  # Pass project root to Ray workers
+    "val_loader": data_module.val_dataloader()
 }
 
 # COMMAND ----------
