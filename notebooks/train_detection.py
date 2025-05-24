@@ -2,7 +2,7 @@
 # COMMAND ----------
 
 # Install dependencies
-!pip install -q pytorch_lightning ray[default] ray[tune] mlflow
+!pip install -q pytorch_lightning ray[default] ray[tune] mlflow albumentations
 
 # COMMAND ----------
 
@@ -10,6 +10,8 @@ import os
 import sys
 import mlflow
 import torch
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from pathlib import Path
 from ray.train import ScalingConfig
 from ray.air import RunConfig
@@ -22,7 +24,6 @@ sys.path.append(project_root)
 
 from trainer.ray_trainer import RayTrainer, cleanup_ray_train
 from tasks.detection.data import DetectionDataModule
-from tasks.detection.transforms import get_transforms
 
 # COMMAND ----------
 
@@ -52,16 +53,30 @@ config = {
 mlflow.set_tracking_uri("databricks")
 mlflow.set_experiment(config["experiment_name"])
 
+# Define transforms
+train_transform = A.Compose([
+    A.RandomResizedCrop(800, 800),
+    A.HorizontalFlip(),
+    A.Normalize(),
+    ToTensorV2()
+])
+
+val_transform = A.Compose([
+    A.Resize(800, 800),
+    A.Normalize(),
+    ToTensorV2()
+])
+
 # Create data module
 data_module = DetectionDataModule(
-    train_dir="data/coco/train2017",
-    val_dir="data/coco/val2017",
-    train_ann="data/coco/annotations/instances_train2017.json",
-    val_ann="data/coco/annotations/instances_val2017.json",
+    train_image_dir="data/coco/train2017",
+    train_annotation_file="data/coco/annotations/instances_train2017.json",
+    val_image_dir="data/coco/val2017",
+    val_annotation_file="data/coco/annotations/instances_val2017.json",
     batch_size=config["batch_size"],
     num_workers=config["num_workers"],
-    train_transform=get_transforms(train=True),
-    val_transform=get_transforms(train=False)
+    train_transform=train_transform,
+    val_transform=val_transform
 )
 
 # Prepare data
