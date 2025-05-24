@@ -1,0 +1,149 @@
+digraph G {
+    // Graph styling
+    graph [fontname = "helvetica", rankdir = TB, splines = true, nodesep = 0.8];
+    node [fontname = "helvetica", shape = box, style = "rounded,filled", fillcolor = lightblue];
+    edge [fontname = "helvetica"];
+
+    // Subgraph for Training Notebooks
+    subgraph cluster_notebooks {
+        label = "Training Notebooks";
+        style = filled;
+        color = lightgrey;
+        node [style = "rounded,filled", fillcolor = lightgreen];
+
+        notebook1 [label = "train_detection.py\n(Detection Training)"];
+        notebook2 [label = "train_classification.py\n(Classification Training)"];
+        notebook3 [label = "train_segmentation.py\n(Segmentation Training)"];
+        notebook4 [label = "train_multitask.py\n(Multi-task Training)"];
+    }
+
+    // Subgraph for Ray Trainer
+    subgraph cluster_trainer {
+        label = "Ray Trainer";
+        style = filled;
+        color = lightgrey;
+        node [style = "rounded,filled", fillcolor = lightyellow];
+
+        ray_trainer [label = "RayTrainer\n- Local/Distributed Training\n- Resource Management\n- MLflow Integration"];
+        train_func [label = "train_func\n- Model Creation\n- Data Preparation\n- Training Loop\n- GPU Debug Info"];
+        train_local [label = "_train_local\n- Single Process\n- Local Mode\n- Resource Verification"];
+        train_dist [label = "_train_distributed\n- Ray on Spark\n- Multi-worker\n- NCCL Configuration"];
+        cleanup [label = "cleanup_ray_train\n- Session Cleanup\n- Resource Release"];
+    }
+
+    // Subgraph for Resource Management
+    subgraph cluster_resources {
+        label = "Resource Management";
+        style = filled;
+        color = lightgrey;
+        node [style = "rounded,filled", fillcolor = lightcoral];
+
+        gpu_check [label = "GPU Availability Check\n- CUDA Detection\n- Device Count\n- Device Names"];
+        ray_resources [label = "Ray Resources\n- CPU Allocation\n- GPU Allocation\n- Worker Resources"];
+        nccl_config [label = "NCCL Configuration\n- Network Interface\n- GPU Communication"];
+    }
+
+    // Subgraph for PyTorch Lightning
+    subgraph cluster_lightning {
+        label = "PyTorch Lightning";
+        style = filled;
+        color = lightgrey;
+        node [style = "rounded,filled", fillcolor = lightseagreen];
+
+        pl_trainer [label = "Lightning Trainer\n- DDP Strategy\n- GPU/CPU Management\n- Callback System"];
+        pl_callbacks [label = "Callbacks\n- ModelCheckpoint\n- EarlyStopping\n- LearningRateMonitor"];
+        pl_module [label = "LightningModule\n- Training Step\n- Validation Step\n- Optimizer Setup"];
+        pl_data [label = "LightningDataModule\n- Data Loading\n- Transforms\n- Batch Size"];
+    }
+
+    // Subgraph for Data Modules
+    subgraph cluster_data {
+        label = "Data Modules";
+        style = filled;
+        color = lightgrey;
+        node [style = "rounded,filled", fillcolor = lightpink];
+
+        base_dataset [label = "BaseVisionDataset\n- COCO API Integration\n- Common Functionality"];
+        detection_data [label = "DetectionDataset\n- Bounding Box Handling\n- COCO Annotations"];
+        classification_data [label = "ClassificationDataset\n- Image Classification\n- Label Processing"];
+        segmentation_data [label = "SegmentationDataset\n- Mask Processing\n- Semantic Labels"];
+    }
+
+    // Subgraph for Models
+    subgraph cluster_models {
+        label = "Models";
+        style = filled;
+        color = lightgrey;
+        node [style = "rounded,filled", fillcolor = lightcyan];
+
+        base_model [label = "BaseModel\n- Common Architecture\n- Training Logic"];
+        detection_model [label = "DetectionModel\n- DETR/Other Models\n- Bounding Box Prediction"];
+        classification_model [label = "ClassificationModel\n- ResNet/Other Models\n- Class Prediction"];
+        segmentation_model [label = "SegmentationModel\n- U-Net/Other Models\n- Mask Prediction"];
+    }
+
+    // Subgraph for MLflow Integration
+    subgraph cluster_mlflow {
+        label = "MLflow Integration";
+        style = filled;
+        color = lightgrey;
+        node [style = "rounded,filled", fillcolor = lightgrey];
+
+        mlflow_logger [label = "MLflowLoggerCallback\n- Experiment Tracking\n- Metric Logging"];
+        model_registry [label = "Model Registry\n- Version Control\n- Model Storage"];
+    }
+
+    // Connections
+    notebook1 -> ray_trainer [label = "Initializes"];
+    notebook2 -> ray_trainer [label = "Initializes"];
+    notebook3 -> ray_trainer [label = "Initializes"];
+    notebook4 -> ray_trainer [label = "Initializes"];
+
+    ray_trainer -> train_func [label = "Executes"];
+    ray_trainer -> train_local [label = "Local Mode"];
+    ray_trainer -> train_dist [label = "Distributed Mode"];
+    ray_trainer -> cleanup [label = "Cleanup"];
+
+    train_func -> gpu_check [label = "Checks"];
+    train_dist -> nccl_config [label = "Configures"];
+    train_local -> ray_resources [label = "Verifies"];
+    train_dist -> ray_resources [label = "Allocates"];
+
+    train_func -> pl_trainer [label = "Creates"];
+    pl_trainer -> pl_callbacks [label = "Uses"];
+    pl_trainer -> pl_module [label = "Trains"];
+    pl_trainer -> pl_data [label = "Uses"];
+
+    pl_module -> base_model [label = "Wraps"];
+    pl_data -> base_dataset [label = "Uses"];
+
+    train_func -> base_dataset [label = "Uses"];
+    train_func -> base_model [label = "Creates"];
+
+    base_dataset -> detection_data [label = "Inherits"];
+    base_dataset -> classification_data [label = "Inherits"];
+    base_dataset -> segmentation_data [label = "Inherits"];
+
+    base_model -> detection_model [label = "Inherits"];
+    base_model -> classification_model [label = "Inherits"];
+    base_model -> segmentation_model [label = "Inherits"];
+
+    ray_trainer -> mlflow_logger [label = "Integrates"];
+    mlflow_logger -> model_registry [label = "Saves Models"];
+
+    // Legend
+    subgraph cluster_legend {
+        label = "Legend";
+        style = filled;
+        color = lightgrey;
+        node [style = "rounded,filled", fillcolor = white];
+
+        l1 [label = "Training Notebooks", fillcolor = lightgreen];
+        l2 [label = "Ray Components", fillcolor = lightyellow];
+        l3 [label = "Resource Management", fillcolor = lightcoral];
+        l4 [label = "PyTorch Lightning", fillcolor = lightseagreen];
+        l5 [label = "Data Components", fillcolor = lightpink];
+        l6 [label = "Model Components", fillcolor = lightcyan];
+        l7 [label = "MLflow Components", fillcolor = lightgrey];
+    }
+} 
