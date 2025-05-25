@@ -1,4 +1,4 @@
-from transformers import AutoModelForObjectDetection
+from transformers import AutoModelForInstanceSegmentation
 from tasks.common.base_module import BaseVisionModule, BaseConfig
 import torch
 from typing import Dict, Any, List
@@ -9,25 +9,26 @@ import json
 import tempfile
 import os
 
-class DetectionConfig(BaseConfig):
-    """Configuration specific to object detection."""
+class InstanceSegmentationConfig(BaseConfig):
+    """Configuration specific to instance segmentation."""
     confidence_threshold: float = 0.5
     nms_threshold: float = 0.5
     max_detections: int = 100
+    mask_threshold: float = 0.5
 
-class DetectionModule(BaseVisionModule):
-    """Object detection module using HuggingFace models."""
+class InstanceSegmentationModule(BaseVisionModule):
+    """Instance segmentation module using HuggingFace models."""
     
-    def __init__(self, model_ckpt: str, config: DetectionConfig = None):
-        """Initialize detection module.
+    def __init__(self, model_ckpt: str, config: InstanceSegmentationConfig = None):
+        """Initialize instance segmentation module.
         
         Args:
             model_ckpt: Path to model checkpoint or HuggingFace model ID
             config: Optional configuration overrides
         """
-        config = config or DetectionConfig()
+        config = config or InstanceSegmentationConfig()
         super().__init__(config)
-        self.model = AutoModelForObjectDetection.from_pretrained(model_ckpt)
+        self.model = AutoModelForInstanceSegmentation.from_pretrained(model_ckpt)
         self.save_hyperparameters()
 
     def _prepare_model_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -83,7 +84,7 @@ class DetectionModule(BaseVisionModule):
             Loss tensor
         """
         outputs = self(batch)
-        loss = outputs['loss']  # Access loss from dictionary
+        loss = outputs['loss']
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
@@ -95,16 +96,16 @@ class DetectionModule(BaseVisionModule):
             batch_idx: Index of the current batch
         """
         outputs = self(batch)
-        loss = outputs['loss']  # Access loss from dictionary
+        loss = outputs['loss']
         self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         
-        # Log detection metrics
+        # Log segmentation metrics
         if "labels" in batch:
-            predictions = outputs['predictions']  # Access predictions from dictionary
-            self._log_detection_metrics(predictions, batch["labels"])
+            predictions = outputs['predictions']
+            self._log_segmentation_metrics(predictions, batch["labels"])
 
-    def _log_detection_metrics(self, predictions: List[Dict], targets: List[Dict]) -> None:
-        """Log detection-specific metrics using COCO evaluation.
+    def _log_segmentation_metrics(self, predictions: List[Dict], targets: List[Dict]) -> None:
+        """Log instance segmentation metrics using COCO evaluation.
         
         Args:
             predictions: List of predictions in COCO format
@@ -122,7 +123,8 @@ class DetectionModule(BaseVisionModule):
                     'image_id': pred['image_id'],
                     'category_id': pred['category_id'],
                     'bbox': pred['bbox'],
-                    'score': pred['score']
+                    'score': pred['score'],
+                    'segmentation': pred['segmentation']
                 })
             else:
                 # Handle list of predictions
@@ -131,7 +133,8 @@ class DetectionModule(BaseVisionModule):
                         'image_id': p['image_id'],
                         'category_id': p['category_id'],
                         'bbox': p['bbox'],
-                        'score': p['score']
+                        'score': p['score'],
+                        'segmentation': p['segmentation']
                     })
         
         # Create temporary files for COCO evaluation
@@ -151,20 +154,27 @@ class DetectionModule(BaseVisionModule):
             coco_gt = COCO(f_gt.name)
             coco_dt = coco_gt.loadRes(f_dt.name)
             
-            # Initialize COCO evaluation
-            coco_eval = COCOeval(coco_gt, coco_dt, 'bbox')
-            coco_eval.evaluate()
-            coco_eval.accumulate()
-            coco_eval.summarize()
+            # Initialize COCO evaluation for both bbox and segmentation
+            coco_eval_bbox = COCOeval(coco_gt, coco_dt, 'bbox')
+            coco_eval_segm = COCOeval(coco_gt, coco_dt, 'segm')
+            
+            # Evaluate both metrics
+            coco_eval_bbox.evaluate()
+            coco_eval_bbox.accumulate()
+            coco_eval_bbox.summarize()
+            
+            coco_eval_segm.evaluate()
+            coco_eval_segm.accumulate()
+            coco_eval_segm.summarize()
             
             # Log metrics
             metrics = {
-                'mAP': coco_eval.stats[0],
-                'mAP_50': coco_eval.stats[1],
-                'mAP_75': coco_eval.stats[2],
-                'mAP_small': coco_eval.stats[3],
-                'mAP_medium': coco_eval.stats[4],
-                'mAP_large': coco_eval.stats[5]
+                'bbox_mAP': coco_eval_bbox.stats[0],
+                'bbox_mAP_50': coco_eval_bbox.stats[1],
+                'bbox_mAP_75': coco_eval_bbox.stats[2],
+                'segm_mAP': coco_eval_segm.stats[0],
+                'segm_mAP_50': coco_eval_segm.stats[1],
+                'segm_mAP_75': coco_eval_segm.stats[2]
             }
             self.log_dict(metrics, on_epoch=True)
             
@@ -224,6 +234,18 @@ class DetectionModule(BaseVisionModule):
             else:
                 bbox = [0, 0, 0, 0]
                 
+            # Handle segmentation
+            if isinstance(ann, dict):
+                segmentation = ann.get('segmentation')
+                if isinstance(segmentation, torch.Tensor):
+                    if segmentation.numel() == 0:
+                        continue
+                    segmentation = segmentation.cpu().numpy().tolist()
+                elif segmentation is None:
+                    segmentation = []
+            else:
+                segmentation = []
+                
             # Handle area
             if isinstance(ann, dict):
                 area = ann.get('area')
@@ -259,6 +281,7 @@ class DetectionModule(BaseVisionModule):
                 'image_id': i,
                 'category_id': category_id,
                 'bbox': bbox,
+                'segmentation': segmentation,
                 'area': area,
                 'iscrowd': iscrowd
             })

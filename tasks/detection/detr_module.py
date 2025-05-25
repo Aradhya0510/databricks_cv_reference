@@ -39,36 +39,51 @@ class DetrModule(DetectionModule):
         
         return inputs
 
-    def _process_model_outputs(self, outputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Process DETR outputs back to COCO format.
+    def _process_model_outputs(self, outputs):
+        """Process DETR outputs to COCO format.
         
         Args:
-            outputs: Raw DETR outputs
+            outputs: Raw DETR model outputs
             
         Returns:
-            Dictionary of COCO format outputs
+            Dictionary containing loss and predictions in COCO format
         """
-        # Convert DETR outputs to COCO format
+        # Get predictions
+        pred_logits = outputs.logits
+        pred_boxes = outputs.pred_boxes
+        
+        # Convert to probabilities and get class predictions
+        probs = pred_logits.softmax(-1)
+        scores, labels = probs.max(-1)
+        
+        # Convert boxes from [x, y, w, h] to [x1, y1, x2, y2] format
+        boxes = pred_boxes
+        boxes_xyxy = torch.zeros_like(boxes)
+        boxes_xyxy[:, 0] = boxes[:, 0] - boxes[:, 2] / 2  # x1
+        boxes_xyxy[:, 1] = boxes[:, 1] - boxes[:, 3] / 2  # y1
+        boxes_xyxy[:, 2] = boxes[:, 0] + boxes[:, 2] / 2  # x2
+        boxes_xyxy[:, 3] = boxes[:, 1] + boxes[:, 3] / 2  # y2
+        
+        # Filter predictions based on confidence threshold
+        mask = scores > self.config.confidence_threshold
+        filtered_boxes = boxes_xyxy[mask]
+        filtered_scores = scores[mask]
+        filtered_labels = labels[mask]
+        
+        # Convert to COCO format
         predictions = []
-        for i, (logits, boxes) in enumerate(zip(outputs.logits, outputs.pred_boxes)):
-            # Get class predictions
-            probs = torch.softmax(logits, dim=-1)
-            scores, labels = probs.max(dim=-1)
-            
-            # Filter by confidence
-            mask = scores > self.config.confidence_threshold
-            scores = scores[mask]
-            labels = labels[mask]
-            boxes = boxes[mask]
-            
-            # Convert to COCO format
+        for i in range(len(filtered_labels)):
             predictions.append({
-                'image_id': i,
-                'category_id': labels.cpu().numpy().tolist(),
-                'bbox': boxes.cpu().numpy().tolist(),
-                'score': scores.cpu().numpy().tolist(),
-                'area': (boxes[:, 2] * boxes[:, 3]).cpu().numpy().tolist(),
-                'iscrowd': [0] * len(labels)
+                'image_id': 0,  # Assuming single image for now
+                'category_id': int(filtered_labels[i].item()),
+                'bbox': filtered_boxes[i].detach().cpu().numpy().tolist(),
+                'score': float(filtered_scores[i].item()),
+                'area': float((filtered_boxes[i, 2] - filtered_boxes[i, 0]) * 
+                            (filtered_boxes[i, 3] - filtered_boxes[i, 1])),
+                'iscrowd': 0
             })
         
-        return {'predictions': predictions} 
+        return {
+            'loss': outputs.loss,  # Include the loss from DETR outputs
+            'predictions': predictions
+        } 

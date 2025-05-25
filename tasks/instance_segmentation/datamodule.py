@@ -10,8 +10,8 @@ import numpy as np
 from ..common.base_dataset import BaseVisionDataset
 from ..common.base_datamodule import BaseVisionDataModule
 
-class DetectionDataset(BaseVisionDataset):
-    """Dataset for object detection tasks using COCO format."""
+class InstanceSegmentationDataset(BaseVisionDataset):
+    """Dataset for instance segmentation tasks using COCO format."""
     
     def __init__(
         self,
@@ -24,16 +24,16 @@ class DetectionDataset(BaseVisionDataset):
         min_visibility: float = 0.0,
         exclude_crowd: bool = True
     ):
-        """Initialize detection dataset.
+        """Initialize instance segmentation dataset.
         
         Args:
             image_dir: Directory containing images
             annotation_file: Path to COCO format annotation file
             transform: Optional Albumentations transform pipeline
             image_processor: Optional HuggingFace image processor
-            min_area: Minimum area of bounding boxes to include
-            max_area: Maximum area of bounding boxes to include
-            min_visibility: Minimum visibility of objects to include
+            min_area: Minimum area of instances to include
+            max_area: Maximum area of instances to include
+            min_visibility: Minimum visibility of instances to include
             exclude_crowd: Whether to exclude crowd annotations
         """
         super().__init__(image_dir, annotation_file)
@@ -96,6 +96,7 @@ class DetectionDataset(BaseVisionDataset):
                 - pixel_values: Image tensor
                 - boxes: Bounding box tensor [N, 4]
                 - labels: Category ID tensor [N]
+                - masks: Instance mask tensor [N, H, W]
                 - area: Area tensor [N]
                 - iscrowd: Crowd flag tensor [N]
                 - image_id: Original image ID
@@ -133,6 +134,7 @@ class DetectionDataset(BaseVisionDataset):
                 "pixel_values": image,
                 "boxes": torch.zeros((0, 4), dtype=torch.float32),
                 "labels": torch.zeros(0, dtype=torch.long),
+                "masks": torch.zeros((0, image_size[0], image_size[1]), dtype=torch.uint8),
                 "area": torch.zeros(0, dtype=torch.float32),
                 "iscrowd": torch.zeros(0, dtype=torch.long),
                 "image_id": torch.tensor(img_id),
@@ -143,6 +145,7 @@ class DetectionDataset(BaseVisionDataset):
         target = {
             'boxes': [],
             'labels': [],
+            'masks': [],
             'area': [],
             'iscrowd': []
         }
@@ -153,6 +156,14 @@ class DetectionDataset(BaseVisionDataset):
             bbox = self._convert_bbox_to_xyxy(ann['bbox'])
             target['boxes'].append(bbox)
             target['labels'].append(ann['category_id'])
+            
+            # Process segmentation mask
+            if 'segmentation' in ann:
+                mask = self._process_segmentation(ann['segmentation'], image_size)
+                target['masks'].append(mask)
+            else:
+                target['masks'].append(np.zeros(image_size, dtype=np.uint8))
+            
             target['area'].append(ann['area'])
             target['iscrowd'].append(ann.get('iscrowd', 0))
         
@@ -160,6 +171,7 @@ class DetectionDataset(BaseVisionDataset):
         target = {
             'boxes': torch.tensor(target['boxes'], dtype=torch.float32),
             'labels': torch.tensor(target['labels'], dtype=torch.long),
+            'masks': torch.tensor(np.stack(target['masks']), dtype=torch.uint8),
             'area': torch.tensor(target['area'], dtype=torch.float32),
             'iscrowd': torch.tensor(target['iscrowd'], dtype=torch.long),
             'image_id': torch.tensor(img_id),
@@ -184,8 +196,35 @@ class DetectionDataset(BaseVisionDataset):
             
         return {"pixel_values": image, **target}
 
-class DetectionDataModule(BaseVisionDataModule):
-    """Data module for object detection tasks."""
+    def _process_segmentation(self, segmentation: List[List[float]], image_size: Tuple[int, int]) -> np.ndarray:
+        """Process segmentation polygon to binary mask.
+        
+        Args:
+            segmentation: List of polygon points
+            image_size: (height, width) of the image
+            
+        Returns:
+            Binary mask as numpy array
+        """
+        from pycocotools import mask as coco_mask
+        import numpy as np
+        
+        if isinstance(segmentation, list):
+            # Polygon format
+            if len(segmentation) > 0:
+                rles = coco_mask.frPyObjects(segmentation, image_size[0], image_size[1])
+                rle = coco_mask.merge(rles)
+                mask = coco_mask.decode(rle)
+            else:
+                mask = np.zeros(image_size, dtype=np.uint8)
+        else:
+            # RLE format
+            mask = coco_mask.decode(segmentation)
+            
+        return mask
+
+class InstanceSegmentationDataModule(BaseVisionDataModule):
+    """Data module for instance segmentation tasks."""
     
     def __init__(
         self,
@@ -203,7 +242,7 @@ class DetectionDataModule(BaseVisionDataModule):
         min_visibility: float = 0.0,
         exclude_crowd: bool = True
     ):
-        """Initialize detection data module.
+        """Initialize instance segmentation data module.
         
         Args:
             train_image_dir: Directory containing training images
@@ -215,9 +254,9 @@ class DetectionDataModule(BaseVisionDataModule):
             train_transform: Optional training transforms
             val_transform: Optional validation transforms
             image_processor: Optional HuggingFace image processor
-            min_area: Minimum area of bounding boxes to include
-            max_area: Maximum area of bounding boxes to include
-            min_visibility: Minimum visibility of objects to include
+            min_area: Minimum area of instances to include
+            max_area: Maximum area of instances to include
+            min_visibility: Minimum visibility of instances to include
             exclude_crowd: Whether to exclude crowd annotations
         """
         super().__init__(train_image_dir, train_annotation_file, val_image_dir, val_annotation_file, batch_size, num_workers)
@@ -244,7 +283,7 @@ class DetectionDataModule(BaseVisionDataModule):
     def setup(self, stage: Optional[str] = None) -> None:
         """Set up datasets for training and validation."""
         if stage == "fit" or stage is None:
-            self.train_dataset = DetectionDataset(
+            self.train_dataset = InstanceSegmentationDataset(
                 self.train_image_dir,
                 self.train_annotation_file,
                 transform=self.train_transform,
@@ -254,7 +293,7 @@ class DetectionDataModule(BaseVisionDataModule):
                 min_visibility=self.min_visibility,
                 exclude_crowd=self.exclude_crowd
             )
-            self.val_dataset = DetectionDataset(
+            self.val_dataset = InstanceSegmentationDataset(
                 self.val_image_dir,
                 self.val_annotation_file,
                 transform=self.val_transform,
@@ -284,7 +323,7 @@ class DetectionDataModule(BaseVisionDataModule):
         )
 
     def _collate_fn(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        """Custom collate function for detection batches.
+        """Custom collate function for instance segmentation batches.
         
         Args:
             batch: List of samples from the dataset
@@ -294,7 +333,7 @@ class DetectionDataModule(BaseVisionDataModule):
         """
         pixel_values = torch.stack([x["pixel_values"] for x in batch])
         targets = {
-            k: [x[k] for x in batch]  # Don't stack boxes as they may have different sizes
+            k: [x[k] for x in batch]  # Don't stack boxes or masks as they may have different sizes
             for k in batch[0].keys()
             if k != "pixel_values"
         }

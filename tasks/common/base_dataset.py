@@ -29,7 +29,7 @@ class BaseVisionDataset(Dataset):
         """
         self.image_dir = image_dir
         self.transform = transform or A.Compose([
-            A.Resize(256, 256),
+            A.Resize(height=256, width=256),
             A.Normalize(),
             ToTensorV2()
         ])

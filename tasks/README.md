@@ -10,12 +10,19 @@ tasks/
 │   ├── base_dataset.py    # Base dataset for COCO format
 │   ├── base_datamodule.py # Base data module
 │   └── base_module.py     # Base Lightning module
-├── classification/        # Classification task
-│   ├── datamodule.py     # Classification data handling
-│   └── lightning_module.py # Classification model
-└── segmentation/         # Segmentation task
-    ├── datamodule.py     # Segmentation data handling
-    └── lightning_module.py # Segmentation model
+├── detection/            # Object detection task
+│   ├── datamodule.py     # Detection data handling
+│   ├── lightning_module.py # Detection model
+│   ├── detr_module.py    # DETR implementation
+│   └── yolo_module.py    # YOLOv8 implementation
+├── instance_segmentation/ # Instance segmentation task
+│   ├── datamodule.py     # Instance segmentation data handling
+│   ├── lightning_module.py # Instance segmentation model
+│   └── mask_rcnn_module.py # Mask R-CNN implementation
+└── semantic_segmentation/ # Semantic segmentation task
+    ├── datamodule.py     # Semantic segmentation data handling
+    ├── lightning_module.py # Semantic segmentation model
+    └── deeplabv3_module.py # DeepLabV3 implementation
 ```
 
 ## Base Components
@@ -71,82 +78,146 @@ Key features:
 
 ## Task-Specific Implementations
 
-### Classification
+### Detection
 
-The classification task implementation for image classification:
+The detection task implementation for object detection:
 
 ```python
-class ClassificationDataset(BaseVisionDataset):
+class DetectionDataset(BaseVisionDataset):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        # Get image and category ID
+        # Get image and bounding boxes
         # Apply transforms
-        # Return pixel values and label
+        # Return pixel values and target dict
 ```
 
 ```python
-class ClassificationDataModule(BaseVisionDataModule):
+class DetectionDataModule(BaseVisionDataModule):
     def setup(self, stage: Optional[str] = None) -> None:
-        # Set up classification datasets
+        # Set up detection datasets
 ```
 
-### Segmentation
+Model implementations:
+- DETR: Transformer-based end-to-end detection
+- YOLOv8: Real-time object detection
 
-The segmentation task implementation for semantic segmentation:
+### Instance Segmentation
+
+The instance segmentation task implementation:
 
 ```python
-class SegmentationDataset(BaseVisionDataset):
-    def _create_semantic_mask(self, image_size: Tuple[int, int], annotations: List[Dict[str, Any]]) -> np.ndarray:
-        # Create semantic mask from COCO annotations
+class InstanceSegmentationDataset(BaseVisionDataset):
+    def _process_segmentation(self, segmentation: List[List[float]], image_size: Tuple[int, int]) -> np.ndarray:
+        # Process segmentation polygons into binary masks
     
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        # Get image and mask
+        # Get image, boxes, and masks
+        # Apply transforms
+        # Return pixel values and target dict
+```
+
+```python
+class InstanceSegmentationDataModule(BaseVisionDataModule):
+    def setup(self, stage: Optional[str] = None) -> None:
+        # Set up instance segmentation datasets
+```
+
+Model implementation:
+- Mask R-CNN: Two-stage detection with instance masks
+
+### Semantic Segmentation
+
+The semantic segmentation task implementation:
+
+```python
+class SemanticSegmentationDataset(BaseVisionDataset):
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        # Get image and semantic mask
         # Apply transforms
         # Return pixel values and mask
 ```
 
 ```python
-class SegmentationDataModule(BaseVisionDataModule):
+class SemanticSegmentationDataModule(BaseVisionDataModule):
     def setup(self, stage: Optional[str] = None) -> None:
-        # Set up segmentation datasets
+        # Set up semantic segmentation datasets
 ```
+
+Model implementation:
+- DeepLabV3: Atrous convolutions for multi-scale feature extraction
 
 ## Usage Examples
 
-### Classification
+### Detection
 
 ```python
-# Initialize classification dataset
-dataset = ClassificationDataset(
+# Initialize detection dataset
+dataset = DetectionDataset(
     image_dir="path/to/images",
     annotation_file="path/to/annotations.json"
 )
 
-# Initialize classification data module
-data_module = ClassificationDataModule(
+# Initialize detection data module
+data_module = DetectionDataModule(
     train_image_dir="path/to/train/images",
     train_annotation_file="path/to/train/annotations.json",
     val_image_dir="path/to/val/images",
     val_annotation_file="path/to/val/annotations.json"
 )
+
+# Initialize YOLOv8 model
+model = YoloModule(
+    model_ckpt="yolov8n.pt",
+    num_classes=80
+)
 ```
 
-### Segmentation
+### Instance Segmentation
 
 ```python
-# Initialize segmentation dataset
-dataset = SegmentationDataset(
+# Initialize instance segmentation dataset
+dataset = InstanceSegmentationDataset(
     image_dir="path/to/images",
-    annotation_file="path/to/annotations.json",
-    ignore_index=255
+    annotation_file="path/to/annotations.json"
 )
 
-# Initialize segmentation data module
-data_module = SegmentationDataModule(
+# Initialize instance segmentation data module
+data_module = InstanceSegmentationDataModule(
     train_image_dir="path/to/train/images",
     train_annotation_file="path/to/train/annotations.json",
     val_image_dir="path/to/val/images",
-    val_annotation_file="path/to/val/annotations.json",
-    ignore_index=255
+    val_annotation_file="path/to/val/annotations.json"
+)
+
+# Initialize Mask R-CNN model
+model = MaskRCNNModule(
+    model_ckpt="facebook/detr-resnet-50",
+    num_classes=80
+)
+```
+
+### Semantic Segmentation
+
+```python
+# Initialize semantic segmentation dataset
+dataset = SemanticSegmentationDataset(
+    image_dir="path/to/images",
+    mask_dir="path/to/masks",
+    num_classes=21
+)
+
+# Initialize semantic segmentation data module
+data_module = SemanticSegmentationDataModule(
+    train_image_dir="path/to/train/images",
+    train_mask_dir="path/to/train/masks",
+    val_image_dir="path/to/val/images",
+    val_mask_dir="path/to/val/masks",
+    num_classes=21
+)
+
+# Initialize DeepLabV3 model
+model = DeepLabV3Module(
+    model_ckpt="microsoft/deeplabv3-resnet-50",
+    num_classes=21
 )
 ```
 

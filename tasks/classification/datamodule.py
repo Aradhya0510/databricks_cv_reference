@@ -109,7 +109,7 @@ class ClassificationDataModule(BaseVisionDataModule):
         
         # Default transforms
         self.train_transform = train_transform or A.Compose([
-            A.RandomResizedCrop(224, 224),
+            A.RandomResizedCrop(size=(224, 224)),
             A.HorizontalFlip(),
             A.RandomBrightnessContrast(),
             A.Normalize(),
@@ -117,7 +117,7 @@ class ClassificationDataModule(BaseVisionDataModule):
         ])
         
         self.val_transform = val_transform or A.Compose([
-            A.Resize(224, 224),
+            A.Resize(height=224, width=224),
             A.Normalize(),
             ToTensorV2()
         ])

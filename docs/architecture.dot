@@ -12,8 +12,8 @@ digraph G {
         node [style = "rounded,filled", fillcolor = lightgreen];
 
         notebook1 [label = "train_detection.py\n(Detection Training)"];
-        notebook2 [label = "train_classification.py\n(Classification Training)"];
-        notebook3 [label = "train_segmentation.py\n(Segmentation Training)"];
+        notebook2 [label = "train_instance_segmentation.py\n(Instance Segmentation Training)"];
+        notebook3 [label = "train_semantic_segmentation.py\n(Semantic Segmentation Training)"];
         notebook4 [label = "train_multitask.py\n(Multi-task Training)"];
     }
 
@@ -64,9 +64,18 @@ digraph G {
         node [style = "rounded,filled", fillcolor = lightpink];
 
         base_dataset [label = "BaseVisionDataset\n- COCO API Integration\n- Common Functionality"];
+        
+        // Detection Data
         detection_data [label = "DetectionDataset\n- Bounding Box Handling\n- COCO Annotations"];
-        classification_data [label = "ClassificationDataset\n- Image Classification\n- Label Processing"];
-        segmentation_data [label = "SegmentationDataset\n- Mask Processing\n- Semantic Labels"];
+        detection_dm [label = "DetectionDataModule\n- Batch Processing\n- Transform Pipeline"];
+        
+        // Instance Segmentation Data
+        instance_data [label = "InstanceSegmentationDataset\n- Mask & Box Handling\n- COCO Annotations"];
+        instance_dm [label = "InstanceSegmentationDataModule\n- Mask Processing\n- Transform Pipeline"];
+        
+        // Semantic Segmentation Data
+        semantic_data [label = "SemanticSegmentationDataset\n- Pixel-wise Labels\n- Direct Mask Loading"];
+        semantic_dm [label = "SemanticSegmentationDataModule\n- Mask Processing\n- Transform Pipeline"];
     }
 
     // Subgraph for Models
@@ -76,10 +85,20 @@ digraph G {
         color = lightgrey;
         node [style = "rounded,filled", fillcolor = lightcyan];
 
-        base_model [label = "BaseModel\n- Common Architecture\n- Training Logic"];
-        detection_model [label = "DetectionModel\n- DETR/Other Models\n- Bounding Box Prediction"];
-        classification_model [label = "ClassificationModel\n- ResNet/Other Models\n- Class Prediction"];
-        segmentation_model [label = "SegmentationModel\n- U-Net/Other Models\n- Mask Prediction"];
+        base_model [label = "BaseVisionModule\n- Common Architecture\n- Training Logic"];
+        
+        // Detection Models
+        detection_model [label = "DetectionModule\n- COCO Evaluation\n- Metric Tracking"];
+        detr_model [label = "DETRModule\n- Transformer-based\n- End-to-end Detection"];
+        yolo_model [label = "YoloModule\n- YOLOv8 Integration\n- Real-time Detection"];
+        
+        // Instance Segmentation Models
+        instance_model [label = "InstanceSegmentationModule\n- Mask & Box Prediction\n- COCO Evaluation"];
+        maskrcnn_model [label = "MaskRCNNModule\n- Two-stage Detection\n- Instance Masks"];
+        
+        // Semantic Segmentation Models
+        semantic_model [label = "SemanticSegmentationModule\n- Pixel-wise Prediction\n- IoU/Dice Metrics"];
+        deeplabv3_model [label = "DeepLabV3Module\n- Atrous Convolutions\n- Multi-scale Features"];
     }
 
     // Subgraph for MLflow Integration
@@ -120,13 +139,26 @@ digraph G {
     train_func -> base_dataset [label = "Uses"];
     train_func -> base_model [label = "Creates"];
 
+    // Data Module Inheritance
     base_dataset -> detection_data [label = "Inherits"];
-    base_dataset -> classification_data [label = "Inherits"];
-    base_dataset -> segmentation_data [label = "Inherits"];
+    base_dataset -> instance_data [label = "Inherits"];
+    base_dataset -> semantic_data [label = "Inherits"];
+    
+    // Data Module Dependencies
+    detection_dm -> detection_data [label = "Uses"];
+    instance_dm -> instance_data [label = "Uses"];
+    semantic_dm -> semantic_data [label = "Uses"];
 
+    // Model Inheritance
     base_model -> detection_model [label = "Inherits"];
-    base_model -> classification_model [label = "Inherits"];
-    base_model -> segmentation_model [label = "Inherits"];
+    base_model -> instance_model [label = "Inherits"];
+    base_model -> semantic_model [label = "Inherits"];
+    
+    // Model-specific Implementations
+    detection_model -> detr_model [label = "Inherits"];
+    detection_model -> yolo_model [label = "Inherits"];
+    instance_model -> maskrcnn_model [label = "Inherits"];
+    semantic_model -> deeplabv3_model [label = "Inherits"];
 
     ray_trainer -> mlflow_logger [label = "Integrates"];
     mlflow_logger -> model_registry [label = "Saves Models"];

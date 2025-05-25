@@ -12,12 +12,19 @@ tasks/
 │   ├── base_dataset.py    # Base dataset for COCO format
 │   ├── base_datamodule.py # Base data module
 │   └── base_module.py     # Base Lightning module
-├── classification/        # Classification task
-│   ├── datamodule.py     # Classification data handling
-│   └── lightning_module.py # Classification model
-└── segmentation/         # Segmentation task
-    ├── datamodule.py     # Segmentation data handling
-    └── lightning_module.py # Segmentation model
+├── detection/            # Object detection task
+│   ├── datamodule.py     # Detection data handling
+│   ├── lightning_module.py # Detection model
+│   ├── detr_module.py    # DETR implementation
+│   └── yolo_module.py    # YOLOv8 implementation
+├── instance_segmentation/ # Instance segmentation task
+│   ├── datamodule.py     # Instance segmentation data handling
+│   ├── lightning_module.py # Instance segmentation model
+│   └── mask_rcnn_module.py # Mask R-CNN implementation
+└── semantic_segmentation/ # Semantic segmentation task
+    ├── datamodule.py     # Semantic segmentation data handling
+    ├── lightning_module.py # Semantic segmentation model
+    └── deeplabv3_module.py # DeepLabV3 implementation
 ```
 
 ### Core Components
@@ -28,9 +35,9 @@ tasks/
    - `BaseVisionModule`: Provides common training functionality
 
 2. **Task-Specific Modules**
-   - Classification: Image classification using HuggingFace models
-   - Segmentation: Semantic segmentation with COCO format support
-   - Detection: Object detection with DETR models
+   - Detection: Object detection with DETR and YOLOv8 models
+   - Instance Segmentation: Instance-level segmentation with Mask R-CNN
+   - Semantic Segmentation: Pixel-wise segmentation with DeepLabV3
 
 ## Features
 
@@ -40,17 +47,19 @@ tasks/
 - **Hyperparameter Optimization**: Built-in support with Ray Tune
 - **MLflow Integration**: Experiment tracking and model management
 - **Multi-task Learning**: Support for training multiple tasks simultaneously
+- **Advanced Metrics**: Task-specific evaluation metrics (COCO mAP, IoU, Dice)
+- **Resource Management**: GPU and distributed training optimization
 
 ## Usage
 
-### Single Task Training
+### Object Detection Training
 
 ```python
-from tasks.classification.datamodule import ClassificationDataModule
-from tasks.classification.lightning_module import ClassificationModule
+from tasks.detection.datamodule import DetectionDataModule
+from tasks.detection.yolo_module import YoloModule
 
 # Initialize data module
-data_module = ClassificationDataModule(
+data_module = DetectionDataModule(
     train_image_dir="path/to/train/images",
     train_annotation_file="path/to/train/annotations.json",
     val_image_dir="path/to/val/images",
@@ -58,9 +67,60 @@ data_module = ClassificationDataModule(
 )
 
 # Initialize model
-model = ClassificationModule(
-    model_ckpt="microsoft/resnet-50",
-    num_labels=1000
+model = YoloModule(
+    model_ckpt="yolov8n.pt",
+    num_classes=80
+)
+
+# Train
+trainer = pl.Trainer(...)
+trainer.fit(model, data_module)
+```
+
+### Instance Segmentation Training
+
+```python
+from tasks.instance_segmentation.datamodule import InstanceSegmentationDataModule
+from tasks.instance_segmentation.mask_rcnn_module import MaskRCNNModule
+
+# Initialize data module
+data_module = InstanceSegmentationDataModule(
+    train_image_dir="path/to/train/images",
+    train_annotation_file="path/to/train/annotations.json",
+    val_image_dir="path/to/val/images",
+    val_annotation_file="path/to/val/annotations.json"
+)
+
+# Initialize model
+model = MaskRCNNModule(
+    model_ckpt="facebook/detr-resnet-50",
+    num_classes=80
+)
+
+# Train
+trainer = pl.Trainer(...)
+trainer.fit(model, data_module)
+```
+
+### Semantic Segmentation Training
+
+```python
+from tasks.semantic_segmentation.datamodule import SemanticSegmentationDataModule
+from tasks.semantic_segmentation.deeplabv3_module import DeepLabV3Module
+
+# Initialize data module
+data_module = SemanticSegmentationDataModule(
+    train_image_dir="path/to/train/images",
+    train_mask_dir="path/to/train/masks",
+    val_image_dir="path/to/val/images",
+    val_mask_dir="path/to/val/masks",
+    num_classes=21
+)
+
+# Initialize model
+model = DeepLabV3Module(
+    model_ckpt="microsoft/deeplabv3-resnet-50",
+    num_classes=21
 )
 
 # Train
@@ -75,10 +135,10 @@ from tasks.common.multitask import MultiTaskModule, MultiTaskConfig
 
 # Configure tasks
 config = MultiTaskConfig(
-    tasks=["classification", "detection"],
+    tasks=["detection", "instance_segmentation"],
     model_checkpoints={
-        "classification": "microsoft/resnet-50",
-        "detection": "facebook/detr-resnet-50"
+        "detection": "yolov8n.pt",
+        "instance_segmentation": "facebook/detr-resnet-50"
     }
 )
 
@@ -103,8 +163,8 @@ search_space = {
 
 # Run search
 best_config = run_hyperparameter_search(
-    task="classification",
-    model_ckpt="microsoft/resnet-50",
+    task="detection",
+    model_ckpt="yolov8n.pt",
     search_space=search_space,
     num_samples=10
 )
@@ -157,6 +217,8 @@ pip install -r requirements.txt
 - MLflow 2.0+
 - Albumentations
 - pycocotools
+- ultralytics (for YOLOv8)
+- torchvision (for Mask R-CNN)
 
 ## Contributing
 
