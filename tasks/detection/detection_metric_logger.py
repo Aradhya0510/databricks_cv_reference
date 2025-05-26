@@ -1,56 +1,12 @@
-from transformers import AutoModelForObjectDetection
-from tasks.common.base_module import BaseVisionModule, BaseConfig, ModelProcessor, MetricLogger
+from tasks.common.base_module import MetricLogger
 import torch
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
+import numpy as np
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
-import numpy as np
 import json
 import tempfile
 import os
-from dataclasses import dataclass
-
-@dataclass
-class DetectionConfig(BaseConfig):
-    """Configuration specific to object detection."""
-    confidence_threshold: float = 0.5
-    nms_threshold: float = 0.5
-    max_detections: int = 100
-
-class DetectionProcessor(ModelProcessor):
-    """Base processor for detection model inputs and outputs.
-    
-    This class provides a template for model-specific implementations.
-    Each model type should implement its own processor that inherits from this class.
-    """
-    
-    def prepare_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Prepare inputs in the format expected by the model.
-        
-        Args:
-            batch: Dictionary containing COCO format tensors
-            
-        Returns:
-            Dictionary of model inputs
-        """
-        return {
-            'pixel_values': batch['pixel_values'],
-            'labels': batch['labels']
-        }
-    
-    def process_outputs(self, outputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Process model outputs back to COCO format.
-        
-        Args:
-            outputs: Raw model outputs
-            
-        Returns:
-            Dictionary of COCO format outputs
-        """
-        return {
-            'loss': outputs.loss,
-            'predictions': outputs.predictions
-        }
 
 class DetectionMetricLogger(MetricLogger):
     """Logger for detection-specific metrics."""
@@ -180,7 +136,7 @@ class DetectionMetricLogger(MetricLogger):
             ]
         }
     
-    def _process_category_id(self, ann: Dict) -> Optional[int]:
+    def _process_category_id(self, ann: Dict) -> int:
         """Process category ID from annotation."""
         if isinstance(ann, dict):
             category_id = ann.get('category_id')
@@ -195,7 +151,7 @@ class DetectionMetricLogger(MetricLogger):
             return int(ann[0].item() if ann.numel() > 1 else ann.item())
         return int(ann)
     
-    def _process_bbox(self, ann: Dict) -> Optional[List[float]]:
+    def _process_bbox(self, ann: Dict) -> List[float]:
         """Process bounding box from annotation."""
         if isinstance(ann, dict):
             bbox = ann.get('bbox')
@@ -225,38 +181,4 @@ class DetectionMetricLogger(MetricLogger):
                     return 0
                 return int(iscrowd[0].item() if iscrowd.numel() > 1 else iscrowd.item())
             return int(iscrowd if iscrowd is not None else 0)
-        return 0
-
-class DetectionModule(BaseVisionModule):
-    """Object detection module using HuggingFace models."""
-    
-    def __init__(
-        self,
-        model_ckpt: str,
-        config: DetectionConfig = None,
-        processor: DetectionProcessor = None,
-        metric_logger: DetectionMetricLogger = None
-    ):
-        """Initialize detection module.
-        
-        Args:
-            model_ckpt: Path to model checkpoint or HuggingFace model ID
-            config: Optional configuration overrides
-            processor: Optional custom processor
-            metric_logger: Optional custom metric logger
-        """
-        config = config or DetectionConfig()
-        processor = processor or DetectionProcessor()
-        metric_logger = metric_logger or DetectionMetricLogger(
-            metrics=['map', 'map_50'],
-            log_every_n_steps=config.log_every_n_steps
-        )
-        
-        super().__init__(config, processor, metric_logger)
-    
-    def _init_model(self) -> torch.nn.Module:
-        """Initialize the detection model."""
-        return AutoModelForObjectDetection.from_pretrained(
-            self.config.model_name,
-            num_labels=self.config.num_classes
-        ) 
+        return 0 

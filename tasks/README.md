@@ -1,249 +1,147 @@
-# Vision Tasks
+# Computer Vision Tasks Framework
 
-This directory contains implementations for various computer vision tasks, built on a common base architecture.
+This framework provides a standardized architecture for various computer vision tasks, making it easy to implement and experiment with different models while maintaining consistent interfaces and evaluation metrics.
 
-## Directory Structure
+## Architecture Overview
 
-```
-tasks/
-├── common/                 # Shared components
-│   ├── base_dataset.py    # Base dataset for COCO format
-│   ├── base_datamodule.py # Base data module
-│   └── base_module.py     # Base Lightning module
-├── detection/            # Object detection task
-│   ├── datamodule.py     # Detection data handling
-│   ├── lightning_module.py # Detection model
-│   ├── detr_module.py    # DETR implementation
-│   └── yolo_module.py    # YOLOv8 implementation
-├── instance_segmentation/ # Instance segmentation task
-│   ├── datamodule.py     # Instance segmentation data handling
-│   ├── lightning_module.py # Instance segmentation model
-│   └── mask_rcnn_module.py # Mask R-CNN implementation
-└── semantic_segmentation/ # Semantic segmentation task
-    ├── datamodule.py     # Semantic segmentation data handling
-    ├── lightning_module.py # Semantic segmentation model
-    └── deeplabv3_module.py # DeepLabV3 implementation
-```
+The framework follows a modular architecture with the following components:
 
-## Base Components
+1. **Base Components**:
+   - `BaseConfig`: Common configuration parameters
+   - `BaseModule`: PyTorch Lightning module with common functionality
+   - `BaseProcessor`: Interface for model-specific processors
+   - `MetricLogger`: Base class for task-specific metrics
 
-### BaseVisionDataset
+2. **Task-Specific Components**:
+   Each task has its own set of components:
+   - Base Processor
+   - Base Metric Logger
+   - Model-Specific Processors
+   - Lightning Module
 
-The base dataset class that handles COCO format data loading and preprocessing:
+## Supported Tasks
 
-```python
-class BaseVisionDataset(Dataset):
-    def __init__(
-        self,
-        image_dir: str,
-        annotation_file: str,
-        transform: Optional[A.Compose] = None,
-        label_map: Optional[Dict[int, str]] = None
-    ):
-        # Initialize dataset with COCO format data
-```
+### 1. Classification
+- Base: `ClassificationProcessor`, `ClassificationMetricLogger`
+- Models: ViT, ResNet
+- Metrics: Accuracy, F1, Precision, Recall
+- [More details](classification/README.md)
 
-Key features:
-- COCO format annotation loading
-- Image preprocessing
-- Category mapping
-- Transform pipeline support
+### 2. Object Detection
+- Base: `DetectionProcessor`, `DetectionMetricLogger`
+- Models: DETR, YOLO
+- Metrics: mAP, mAP50, mAP75
+- [More details](detection/README.md)
 
-### BaseVisionDataModule
+### 3. Instance Segmentation
+- Base: `InstanceSegmentationProcessor`, `InstanceSegmentationMetricLogger`
+- Models: Mask R-CNN, DETR with segmentation
+- Metrics: mAP, mask mAP
+- [More details](instance_segmentation/README.md)
 
-The base data module that manages data loading and transformations:
+### 4. Semantic Segmentation
+- Base: `SemanticSegmentationProcessor`, `SemanticSegmentationMetricLogger`
+- Models: DeepLabV3, SegFormer
+- Metrics: IoU, Dice, Pixel Accuracy
+- [More details](semantic_segmentation/README.md)
 
-```python
-class BaseVisionDataModule(pl.LightningDataModule):
-    def __init__(
-        self,
-        train_image_dir: str,
-        train_annotation_file: str,
-        val_image_dir: str,
-        val_annotation_file: str,
-        batch_size: int = 32,
-        num_workers: int = 4,
-        train_transform: Optional[A.Compose] = None,
-        val_transform: Optional[A.Compose] = None,
-        label_map: Optional[Dict[int, str]] = None
-    ):
-        # Initialize data module
-```
+## Common Features
 
-Key features:
-- Training and validation data management
-- Default transform pipelines
-- DataLoader configuration
-- Worker management
+1. **Standardized Interfaces**:
+   - Consistent input/output formats
+   - Common configuration parameters
+   - Unified metric computation
 
-## Task-Specific Implementations
+2. **Model Support**:
+   - HuggingFace Transformers integration
+   - Easy addition of new models
+   - Model-specific preprocessing
 
-### Detection
+3. **Evaluation**:
+   - Task-specific metrics
+   - Standardized evaluation protocols
+   - Comprehensive logging
 
-The detection task implementation for object detection:
+4. **Training**:
+   - PyTorch Lightning integration
+   - Common training loops
+   - Distributed training support
+
+## Usage Example
 
 ```python
-class DetectionDataset(BaseVisionDataset):
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        # Get image and bounding boxes
-        # Apply transforms
-        # Return pixel values and target dict
-```
+from tasks.common.base_module import BaseConfig
+from tasks.detection.lightning_module import DetectionModule
+from tasks.detection.detr_processor import DetrProcessor
+from tasks.detection.detection_metric_logger import DetectionMetricLogger
 
-```python
-class DetectionDataModule(BaseVisionDataModule):
-    def setup(self, stage: Optional[str] = None) -> None:
-        # Set up detection datasets
-```
-
-Model implementations:
-- DETR: Transformer-based end-to-end detection
-- YOLOv8: Real-time object detection
-
-### Instance Segmentation
-
-The instance segmentation task implementation:
-
-```python
-class InstanceSegmentationDataset(BaseVisionDataset):
-    def _process_segmentation(self, segmentation: List[List[float]], image_size: Tuple[int, int]) -> np.ndarray:
-        # Process segmentation polygons into binary masks
-    
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        # Get image, boxes, and masks
-        # Apply transforms
-        # Return pixel values and target dict
-```
-
-```python
-class InstanceSegmentationDataModule(BaseVisionDataModule):
-    def setup(self, stage: Optional[str] = None) -> None:
-        # Set up instance segmentation datasets
-```
-
-Model implementation:
-- Mask R-CNN: Two-stage detection with instance masks
-
-### Semantic Segmentation
-
-The semantic segmentation task implementation:
-
-```python
-class SemanticSegmentationDataset(BaseVisionDataset):
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        # Get image and semantic mask
-        # Apply transforms
-        # Return pixel values and mask
-```
-
-```python
-class SemanticSegmentationDataModule(BaseVisionDataModule):
-    def setup(self, stage: Optional[str] = None) -> None:
-        # Set up semantic segmentation datasets
-```
-
-Model implementation:
-- DeepLabV3: Atrous convolutions for multi-scale feature extraction
-
-## Usage Examples
-
-### Detection
-
-```python
-# Initialize detection dataset
-dataset = DetectionDataset(
-    image_dir="path/to/images",
-    annotation_file="path/to/annotations.json"
+# Configure the model
+config = BaseConfig(
+    model_name="facebook/detr-resnet-50",
+    num_classes=91,
+    learning_rate=1e-4
 )
 
-# Initialize detection data module
-data_module = DetectionDataModule(
-    train_image_dir="path/to/train/images",
-    train_annotation_file="path/to/train/annotations.json",
-    val_image_dir="path/to/val/images",
-    val_annotation_file="path/to/val/annotations.json"
-)
+# Create processor and metric logger
+processor = DetrProcessor(config)
+metric_logger = DetectionMetricLogger(config)
 
-# Initialize YOLOv8 model
-model = YoloModule(
-    model_ckpt="yolov8n.pt",
-    num_classes=80
-)
-```
-
-### Instance Segmentation
-
-```python
-# Initialize instance segmentation dataset
-dataset = InstanceSegmentationDataset(
-    image_dir="path/to/images",
-    annotation_file="path/to/annotations.json"
-)
-
-# Initialize instance segmentation data module
-data_module = InstanceSegmentationDataModule(
-    train_image_dir="path/to/train/images",
-    train_annotation_file="path/to/train/annotations.json",
-    val_image_dir="path/to/val/images",
-    val_annotation_file="path/to/val/annotations.json"
-)
-
-# Initialize Mask R-CNN model
-model = MaskRCNNModule(
+# Initialize module
+module = DetectionModule(
     model_ckpt="facebook/detr-resnet-50",
-    num_classes=80
+    config=config,
+    processor=processor,
+    metric_logger=metric_logger
 )
+
+# Train the model
+trainer = pl.Trainer(max_epochs=100)
+trainer.fit(module, datamodule)
 ```
 
-### Semantic Segmentation
+## Best Practices
 
-```python
-# Initialize semantic segmentation dataset
-dataset = SemanticSegmentationDataset(
-    image_dir="path/to/images",
-    mask_dir="path/to/masks",
-    num_classes=21
-)
+1. **Model Selection**:
+   - Choose models based on task requirements
+   - Consider speed vs. accuracy trade-offs
+   - Use appropriate model sizes
 
-# Initialize semantic segmentation data module
-data_module = SemanticSegmentationDataModule(
-    train_image_dir="path/to/train/images",
-    train_mask_dir="path/to/train/masks",
-    val_image_dir="path/to/val/images",
-    val_mask_dir="path/to/val/masks",
-    num_classes=21
-)
+2. **Configuration**:
+   - Set task-specific parameters
+   - Configure model-specific settings
+   - Adjust training parameters
 
-# Initialize DeepLabV3 model
-model = DeepLabV3Module(
-    model_ckpt="microsoft/deeplabv3-resnet-50",
-    num_classes=21
-)
-```
+3. **Data Preparation**:
+   - Follow task-specific formats
+   - Use appropriate preprocessing
+   - Handle data augmentation
 
-## Adding New Tasks
+4. **Training**:
+   - Monitor task-specific metrics
+   - Use appropriate batch sizes
+   - Implement early stopping
 
-To add a new task:
+## Contributing
 
-1. Create a new directory under `tasks/` for your task
-2. Create task-specific dataset and data module classes
-3. Inherit from base classes
-4. Implement task-specific logic
-5. Add task-specific transforms and metrics
+To add a new model or task:
+1. Create model-specific processor
+2. Implement task-specific metrics
+3. Add example configurations
+4. Update documentation
 
-Example:
+## Future Improvements
 
-```python
-from ..common.base_dataset import BaseVisionDataset
-from ..common.base_datamodule import BaseVisionDataModule
+1. **Model Support**:
+   - Add more model architectures
+   - Support custom models
+   - Add model zoo
 
-class NewTaskDataset(BaseVisionDataset):
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        # Implement task-specific data loading
-        pass
+2. **Features**:
+   - Add more metrics
+   - Improve data augmentation
+   - Add model compression
 
-class NewTaskDataModule(BaseVisionDataModule):
-    def setup(self, stage: Optional[str] = None) -> None:
-        # Implement task-specific setup
-        pass
-``` 
+3. **Documentation**:
+   - Add more examples
+   - Improve API documentation
+   - Add tutorials 

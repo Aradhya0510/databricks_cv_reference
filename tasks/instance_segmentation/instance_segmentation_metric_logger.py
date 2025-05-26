@@ -1,59 +1,15 @@
-from transformers import AutoModelForObjectDetection
-from tasks.common.base_module import BaseVisionModule, BaseConfig, ModelProcessor, MetricLogger
+from tasks.common.base_module import MetricLogger
 import torch
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
+import numpy as np
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
-import numpy as np
 import json
 import tempfile
 import os
-from dataclasses import dataclass
 
-@dataclass
-class DetectionConfig(BaseConfig):
-    """Configuration specific to object detection."""
-    confidence_threshold: float = 0.5
-    nms_threshold: float = 0.5
-    max_detections: int = 100
-
-class DetectionProcessor(ModelProcessor):
-    """Base processor for detection model inputs and outputs.
-    
-    This class provides a template for model-specific implementations.
-    Each model type should implement its own processor that inherits from this class.
-    """
-    
-    def prepare_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Prepare inputs in the format expected by the model.
-        
-        Args:
-            batch: Dictionary containing COCO format tensors
-            
-        Returns:
-            Dictionary of model inputs
-        """
-        return {
-            'pixel_values': batch['pixel_values'],
-            'labels': batch['labels']
-        }
-    
-    def process_outputs(self, outputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Process model outputs back to COCO format.
-        
-        Args:
-            outputs: Raw model outputs
-            
-        Returns:
-            Dictionary of COCO format outputs
-        """
-        return {
-            'loss': outputs.loss,
-            'predictions': outputs.predictions
-        }
-
-class DetectionMetricLogger(MetricLogger):
-    """Logger for detection-specific metrics."""
+class InstanceSegmentationMetricLogger(MetricLogger):
+    """Logger for instance segmentation-specific metrics."""
     
     def _compute_map(self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> float:
         """Compute mean Average Precision."""
@@ -81,6 +37,19 @@ class DetectionMetricLogger(MetricLogger):
         metrics = self._evaluate_coco(coco_gt, coco_dt)
         return metrics['mAP_50']
     
+    def _compute_mask_map(self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> float:
+        """Compute mask mAP."""
+        predictions = outputs['predictions']
+        targets = batch['labels']
+        
+        # Convert predictions and targets to COCO format
+        coco_gt = self._to_coco_format(targets)
+        coco_dt = self._format_predictions(predictions)
+        
+        # Evaluate using COCO API
+        metrics = self._evaluate_coco(coco_gt, coco_dt, iou_type='segm')
+        return metrics['mAP']
+    
     def _format_predictions(self, predictions: List[Dict]) -> List[Dict]:
         """Format predictions for COCO evaluation."""
         coco_dt = []
@@ -90,7 +59,8 @@ class DetectionMetricLogger(MetricLogger):
                     'image_id': pred['image_id'],
                     'category_id': pred['category_id'],
                     'bbox': pred['bbox'],
-                    'score': pred['score']
+                    'score': pred['score'],
+                    'segmentation': pred['segmentation']
                 })
             else:
                 for p in pred:
@@ -98,11 +68,12 @@ class DetectionMetricLogger(MetricLogger):
                         'image_id': p['image_id'],
                         'category_id': p['category_id'],
                         'bbox': p['bbox'],
-                        'score': p['score']
+                        'score': p['score'],
+                        'segmentation': p['segmentation']
                     })
         return coco_dt
     
-    def _evaluate_coco(self, coco_gt: Dict, coco_dt: List[Dict]) -> Dict[str, float]:
+    def _evaluate_coco(self, coco_gt: Dict, coco_dt: List[Dict], iou_type: str = 'bbox') -> Dict[str, float]:
         """Evaluate predictions using COCO API."""
         # Create temporary files
         f_gt = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
@@ -120,7 +91,7 @@ class DetectionMetricLogger(MetricLogger):
             coco_dt = coco_gt.loadRes(f_dt.name)
             
             # Evaluate
-            coco_eval = COCOeval(coco_gt, coco_dt, 'bbox')
+            coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
             coco_eval.evaluate()
             coco_eval.accumulate()
             coco_eval.summarize()
@@ -158,6 +129,9 @@ class DetectionMetricLogger(MetricLogger):
             if bbox is None:
                 continue
             
+            # Process segmentation
+            segmentation = self._process_segmentation(ann)
+            
             # Process area and iscrowd
             area = self._process_area(ann)
             iscrowd = self._process_iscrowd(ann)
@@ -167,6 +141,7 @@ class DetectionMetricLogger(MetricLogger):
                 'image_id': i,
                 'category_id': category_id,
                 'bbox': bbox,
+                'segmentation': segmentation,
                 'area': area,
                 'iscrowd': iscrowd
             })
@@ -180,7 +155,7 @@ class DetectionMetricLogger(MetricLogger):
             ]
         }
     
-    def _process_category_id(self, ann: Dict) -> Optional[int]:
+    def _process_category_id(self, ann: Dict) -> int:
         """Process category ID from annotation."""
         if isinstance(ann, dict):
             category_id = ann.get('category_id')
@@ -195,7 +170,7 @@ class DetectionMetricLogger(MetricLogger):
             return int(ann[0].item() if ann.numel() > 1 else ann.item())
         return int(ann)
     
-    def _process_bbox(self, ann: Dict) -> Optional[List[float]]:
+    def _process_bbox(self, ann: Dict) -> List[float]:
         """Process bounding box from annotation."""
         if isinstance(ann, dict):
             bbox = ann.get('bbox')
@@ -204,6 +179,17 @@ class DetectionMetricLogger(MetricLogger):
                     return None
                 return bbox.cpu().numpy().tolist()
         return [0, 0, 0, 0]
+    
+    def _process_segmentation(self, ann: Dict) -> List[List[float]]:
+        """Process segmentation from annotation."""
+        if isinstance(ann, dict):
+            segmentation = ann.get('segmentation')
+            if isinstance(segmentation, torch.Tensor):
+                if segmentation.numel() == 0:
+                    return []
+                return segmentation.cpu().numpy().tolist()
+            return segmentation if segmentation is not None else []
+        return []
     
     def _process_area(self, ann: Dict) -> float:
         """Process area from annotation."""
@@ -225,38 +211,4 @@ class DetectionMetricLogger(MetricLogger):
                     return 0
                 return int(iscrowd[0].item() if iscrowd.numel() > 1 else iscrowd.item())
             return int(iscrowd if iscrowd is not None else 0)
-        return 0
-
-class DetectionModule(BaseVisionModule):
-    """Object detection module using HuggingFace models."""
-    
-    def __init__(
-        self,
-        model_ckpt: str,
-        config: DetectionConfig = None,
-        processor: DetectionProcessor = None,
-        metric_logger: DetectionMetricLogger = None
-    ):
-        """Initialize detection module.
-        
-        Args:
-            model_ckpt: Path to model checkpoint or HuggingFace model ID
-            config: Optional configuration overrides
-            processor: Optional custom processor
-            metric_logger: Optional custom metric logger
-        """
-        config = config or DetectionConfig()
-        processor = processor or DetectionProcessor()
-        metric_logger = metric_logger or DetectionMetricLogger(
-            metrics=['map', 'map_50'],
-            log_every_n_steps=config.log_every_n_steps
-        )
-        
-        super().__init__(config, processor, metric_logger)
-    
-    def _init_model(self) -> torch.nn.Module:
-        """Initialize the detection model."""
-        return AutoModelForObjectDetection.from_pretrained(
-            self.config.model_name,
-            num_labels=self.config.num_classes
-        ) 
+        return 0 

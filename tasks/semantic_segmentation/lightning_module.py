@@ -1,38 +1,135 @@
 from transformers import AutoModelForSemanticSegmentation
-from tasks.common.base_module import BaseVisionModule, BaseConfig
+from tasks.common.base_module import BaseVisionModule, BaseConfig, ModelProcessor, MetricLogger
 import torch
 from typing import Dict, Any, List
-import numpy as np
-from torchmetrics import JaccardIndex, Dice
 import torch.nn.functional as F
+from dataclasses import dataclass
 
+@dataclass
 class SemanticSegmentationConfig(BaseConfig):
     """Configuration specific to semantic segmentation."""
-    num_classes: int = 21  # Default for Pascal VOC
-    ignore_index: int = 255
-    use_aux_loss: bool = False
-    aux_loss_weight: float = 0.4
+    num_labels: int = 1000
+    dropout: float = 0.1
+    label_smoothing: float = 0.0
+
+class SemanticSegmentationProcessor(ModelProcessor):
+    """Processor for semantic segmentation model inputs and outputs."""
+    
+    def prepare_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Prepare inputs in the format expected by the model.
+        
+        Args:
+            batch: Dictionary containing image tensors and masks
+            
+        Returns:
+            Dictionary of model inputs
+        """
+        return {
+            'pixel_values': batch['pixel_values'],
+            'labels': batch['labels']
+        }
+    
+    def process_outputs(self, outputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Process model outputs.
+        
+        Args:
+            outputs: Raw model outputs
+            
+        Returns:
+            Dictionary containing loss and predictions
+        """
+        return {
+            'loss': outputs.loss,
+            'logits': outputs.logits,
+            'predictions': outputs.logits.argmax(dim=1)
+        }
+
+class SemanticSegmentationMetricLogger(MetricLogger):
+    """Logger for semantic segmentation-specific metrics."""
+    
+    def _compute_iou(self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> float:
+        """Compute mean Intersection over Union."""
+        predictions = outputs['predictions']
+        targets = batch['labels']
+        
+        # Compute IoU for each class
+        ious = []
+        for cls in range(self.num_classes):
+            pred_mask = (predictions == cls)
+            target_mask = (targets == cls)
+            
+            intersection = (pred_mask & target_mask).sum().float()
+            union = (pred_mask | target_mask).sum().float()
+            
+            if union > 0:
+                ious.append((intersection / union).item())
+        
+        return sum(ious) / len(ious) if ious else 0.0
+    
+    def _compute_pixel_accuracy(self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> float:
+        """Compute pixel-wise accuracy."""
+        predictions = outputs['predictions']
+        targets = batch['labels']
+        
+        correct = (predictions == targets).sum().float()
+        total = targets.numel()
+        
+        return (correct / total).item()
+    
+    def _compute_dice(self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> float:
+        """Compute mean Dice coefficient."""
+        predictions = outputs['predictions']
+        targets = batch['labels']
+        
+        # Compute Dice for each class
+        dice_scores = []
+        for cls in range(self.num_classes):
+            pred_mask = (predictions == cls)
+            target_mask = (targets == cls)
+            
+            intersection = (pred_mask & target_mask).sum().float()
+            total = pred_mask.sum() + target_mask.sum()
+            
+            if total > 0:
+                dice_scores.append((2 * intersection / total).item())
+        
+        return sum(dice_scores) / len(dice_scores) if dice_scores else 0.0
 
 class SemanticSegmentationModule(BaseVisionModule):
     """Semantic segmentation module using HuggingFace models."""
     
-    def __init__(self, model_ckpt: str, config: SemanticSegmentationConfig = None):
+    def __init__(
+        self,
+        model_ckpt: str,
+        config: SemanticSegmentationConfig = None,
+        processor: SemanticSegmentationProcessor = None,
+        metric_logger: SemanticSegmentationMetricLogger = None
+    ):
         """Initialize semantic segmentation module.
         
         Args:
             model_ckpt: Path to model checkpoint or HuggingFace model ID
             config: Optional configuration overrides
+            processor: Optional custom processor
+            metric_logger: Optional custom metric logger
         """
         config = config or SemanticSegmentationConfig()
-        super().__init__(config)
-        self.model = AutoModelForSemanticSegmentation.from_pretrained(model_ckpt)
-        self.save_hyperparameters()
+        processor = processor or SemanticSegmentationProcessor()
+        metric_logger = metric_logger or SemanticSegmentationMetricLogger(
+            metrics=['iou', 'pixel_accuracy', 'dice'],
+            log_every_n_steps=config.log_every_n_steps
+        )
         
-        # Initialize metrics
-        self.train_iou = JaccardIndex(task='multiclass', num_classes=config.num_classes, ignore_index=config.ignore_index)
-        self.val_iou = JaccardIndex(task='multiclass', num_classes=config.num_classes, ignore_index=config.ignore_index)
-        self.train_dice = Dice(num_classes=config.num_classes, ignore_index=config.ignore_index)
-        self.val_dice = Dice(num_classes=config.num_classes, ignore_index=config.ignore_index)
+        super().__init__(config, processor, metric_logger)
+    
+    def _init_model(self) -> torch.nn.Module:
+        """Initialize the semantic segmentation model."""
+        return AutoModelForSemanticSegmentation.from_pretrained(
+            self.config.model_name,
+            num_labels=self.config.num_classes,
+            dropout=self.config.dropout,
+            label_smoothing=self.config.label_smoothing
+        )
 
     def _prepare_model_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Prepare inputs in the format expected by the model.

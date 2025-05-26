@@ -24,9 +24,11 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
 
 from trainer.ray_trainer import RayTrainer, cleanup_ray_train
-from tasks.detection.data import DetectionDataModule
-from tasks.detection.detr_module import DetrModule
-from tasks.detection.lightning_module import DetectionConfig
+from tasks.detection.datamodule import DetectionDataModule
+from tasks.detection.lightning_module import DetectionModule
+from tasks.detection.detr_processor import DetrProcessor
+from tasks.detection.detection_metric_logger import DetectionMetricLogger
+from tasks.common.base_module import BaseConfig
 
 # COMMAND ----------
 
@@ -143,46 +145,12 @@ finally:
     # Clean up Ray resources
     cleanup_ray_train()
 
-# Optional: Run hyperparameter search using Ray Tune
-"""
-from ray import tune
-from ray.tune.schedulers import ASHAScheduler
-
-# Define search space
-search_space = {
-    "learning_rate": tune.loguniform(1e-5, 1e-3),
-    "weight_decay": tune.loguniform(1e-5, 1e-3),
-    "batch_size": tune.choice([4, 8, 16])
-}
-
-# Define scheduler
-scheduler = ASHAScheduler(
-    metric="val_loss",
-    mode="min",
-    max_t=config["max_epochs"],
-    grace_period=1,
-    reduction_factor=2
-)
-
-# Run hyperparameter search
-analysis = tune.run(
-    trainer.train,
-    config=search_space,
-    num_samples=10,
-    scheduler=scheduler,
-    resources_per_trial={"cpu": 1, "gpu": 1 if torch.cuda.is_available() else 0}
-)
-
-print("Best hyperparameters found were: ", analysis.best_config)
-""" 
-
 # COMMAND ----------
 
 # Direct PyTorch Lightning Training (Bypassing Ray)
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import MLFlowLogger
-from tasks.detection.lightning_module import DetectionModule, DetectionConfig
 
 # Create data module
 data_module = DetectionDataModule(
@@ -218,14 +186,19 @@ callbacks = [
     )
 ]
 
-# Create detection config
-detection_config = DetectionConfig(
+# Create base config
+base_config = BaseConfig(
+    model_name=config["model_ckpt"],
+    num_classes=91,  # COCO dataset has 91 classes
     learning_rate=config["learning_rate"],
     weight_decay=config["weight_decay"],
     confidence_threshold=0.5,
-    nms_threshold=0.5,
-    max_detections=100
+    nms_threshold=0.5
 )
+
+# Create processor and metric logger
+processor = DetrProcessor(base_config)
+metric_logger = DetectionMetricLogger(base_config)
 
 # Initialize trainer
 trainer = pl.Trainer(
@@ -238,13 +211,15 @@ trainer = pl.Trainer(
     gradient_clip_val=1.0
 )
 
-# Create and train model
+# Create model with new architecture
 model = DetectionModule(
     model_ckpt=config["model_ckpt"],
-    config=detection_config
+    config=base_config,
+    processor=processor,
+    metric_logger=metric_logger
 )
 
-print("Starting direct PyTorch Lightning training...")
+# Train the model
 trainer.fit(model, data_module)
 
 # Save the final model
@@ -257,16 +232,6 @@ best_val_loss = min(callbacks[0].best_model_score.item() if callbacks[0].best_mo
                    callbacks[1].best_score.item() if callbacks[1].best_score else float('inf'))
 print(f"Best validation loss: {best_val_loss}")
 
-# Create model
-model = DetrModule(
-    model_ckpt="facebook/detr-resnet-50",
-    config=DetectionConfig(
-        learning_rate=1e-4,
-        weight_decay=1e-4,
-        confidence_threshold=0.5,
-        nms_threshold=0.5,
-        max_detections=100
-    )
-)
+
 
 # COMMAND ---------- 
