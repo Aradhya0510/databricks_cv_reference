@@ -186,14 +186,18 @@ callbacks = [
     )
 ]
 
-# Create base config
+# Create base config with all required parameters
 base_config = BaseConfig(
     model_name=config["model_ckpt"],
     num_classes=91,  # COCO dataset has 91 classes
     learning_rate=config["learning_rate"],
     weight_decay=config["weight_decay"],
-    confidence_threshold=0.5,
-    nms_threshold=0.5
+    image_size=(800, 800),  # Match the transform size
+    normalize_mean=(0.485, 0.456, 0.406),  # ImageNet normalization
+    normalize_std=(0.229, 0.224, 0.225),  # ImageNet normalization
+    gradient_clip_val=1.0,
+    log_every_n_steps=50,
+    log_metrics=["map", "map_50"]  # Detection-specific metrics
 )
 
 # Create processor and metric logger

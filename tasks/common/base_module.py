@@ -41,6 +41,10 @@ class BaseConfig:
 class ModelProcessor(ABC):
     """Abstract base class for model input/output processing."""
     
+    def __init__(self):
+        """Initialize the model processor."""
+        self.config = None
+    
     @abstractmethod
     def prepare_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Prepare model inputs from batch."""

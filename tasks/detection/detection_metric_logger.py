@@ -9,10 +9,32 @@ import tempfile
 import os
 
 class DetectionMetricLogger(MetricLogger):
-    """Logger for detection-specific metrics."""
+    """Metric logger for object detection tasks."""
+    
+    def __init__(self, config: Any):
+        """Initialize detection metric logger.
+        
+        Args:
+            config: Configuration object containing model parameters
+        """
+        # Extract metrics from config
+        metrics = config.log_metrics if hasattr(config, 'log_metrics') else ["map", "map_50"]
+        log_every_n_steps = config.log_every_n_steps if hasattr(config, 'log_every_n_steps') else 50
+        
+        # Initialize parent class with metrics list
+        super().__init__(metrics=metrics, log_every_n_steps=log_every_n_steps)
+        self.config = config
     
     def _compute_map(self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> float:
-        """Compute mean Average Precision."""
+        """Compute mean Average Precision (mAP).
+        
+        Args:
+            outputs: Model outputs
+            batch: Input batch
+            
+        Returns:
+            mAP score
+        """
         predictions = outputs['predictions']
         targets = batch['labels']
         
@@ -25,7 +47,15 @@ class DetectionMetricLogger(MetricLogger):
         return metrics['mAP']
     
     def _compute_map_50(self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> float:
-        """Compute mean Average Precision at IoU=0.50."""
+        """Compute mean Average Precision at IoU=0.50 (mAP50).
+        
+        Args:
+            outputs: Model outputs
+            batch: Input batch
+            
+        Returns:
+            mAP50 score
+        """
         predictions = outputs['predictions']
         targets = batch['labels']
         

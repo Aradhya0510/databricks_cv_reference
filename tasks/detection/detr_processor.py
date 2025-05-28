@@ -12,8 +12,18 @@ class DetrProcessor(DetectionProcessor):
         Args:
             config: Configuration object containing model parameters
         """
-        super().__init__(config)
-        self.processor = DetrImageProcessor.from_pretrained(config.model_name)
+        # Initialize the parent class (DetectionProcessor) which inherits from ModelProcessor
+        DetectionProcessor.__init__(self, config)
+        self.processor = DetrImageProcessor.from_pretrained(
+            config.model_name,
+            do_resize=False,  # Disable resizing since images are already resized
+            do_rescale=False,  # Disable rescaling since images are already normalized
+            do_normalize=False  # Disable normalization since images are already normalized
+        )
+        # Store precision from config
+        self.precision = getattr(config, 'precision', '32')
+        # Store device from config
+        self.device = getattr(config, 'device', 'cuda' if torch.cuda.is_available() else 'cpu')
     
     def prepare_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Prepare inputs in the format expected by DETR.
@@ -24,16 +34,50 @@ class DetrProcessor(DetectionProcessor):
         Returns:
             Dictionary of model inputs
         """
+        # Convert annotations to DETR format
+        detections = []
+        for i, (boxes, labels) in enumerate(zip(batch['boxes'], batch['labels'])):
+            if len(boxes) > 0:
+                # Move tensors to CPU before converting to list
+                boxes_cpu = boxes.cpu()
+                labels_cpu = labels.cpu()
+                detections.append({
+                    'image_id': i,
+                    'annotations': [
+                        {
+                            'bbox': box.tolist(),
+                            'category_id': label.item(),
+                            'area': float((box[2] - box[0]) * (box[3] - box[1])),
+                            'iscrowd': 0
+                        }
+                        for box, label in zip(boxes_cpu, labels_cpu)
+                    ]
+                })
+            else:
+                detections.append({
+                    'image_id': i,
+                    'annotations': []
+                })
+        
         # Process images using DETR processor
         processed = self.processor(
             images=batch['pixel_values'],
-            annotations=batch['labels'],
+            annotations=detections,
             return_tensors="pt"
         )
         
+        # Move tensors to correct device and precision
+        pixel_values = processed.pixel_values.to(device=self.device)
+        labels = processed.labels.to(device=self.device)
+        
+        # Convert to appropriate precision
+        if self.precision == '16' or self.precision == '16-mixed':
+            pixel_values = pixel_values.to(dtype=torch.float16)
+            labels = labels.to(dtype=torch.float16)
+        
         return {
-            'pixel_values': processed.pixel_values,
-            'labels': processed.labels
+            'pixel_values': pixel_values,
+            'labels': labels
         }
     
     def process_outputs(self, outputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -116,15 +160,16 @@ class DetrProcessor(DetectionProcessor):
         """
         predictions = []
         for pred in processed['predictions']:
-            boxes = pred['boxes']
-            scores = pred['scores']
-            labels = pred['labels']
+            # Move tensors to CPU before converting to numpy
+            boxes = pred['boxes'].cpu()
+            scores = pred['scores'].cpu()
+            labels = pred['labels'].cpu()
             
             for box, score, label in zip(boxes, scores, labels):
                 predictions.append({
                     'image_id': 0,  # This should be set appropriately
                     'category_id': int(label.item()),
-                    'bbox': box.cpu().numpy().tolist(),
+                    'bbox': box.numpy().tolist(),
                     'score': float(score.item())
                 })
         

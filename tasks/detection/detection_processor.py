@@ -5,6 +5,16 @@ from typing import Dict, Any, List
 class DetectionProcessor(ModelProcessor):
     """Base processor for object detection model inputs and outputs."""
     
+    def __init__(self, config: Any):
+        """Initialize detection processor.
+        
+        Args:
+            config: Configuration object containing model parameters
+        """
+        # Initialize the parent class (ModelProcessor)
+        ModelProcessor.__init__(self)
+        self.config = config
+    
     def prepare_inputs(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Prepare inputs in the format expected by the model.
         
