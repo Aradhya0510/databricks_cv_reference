@@ -1,0 +1,64 @@
+# Model Configuration
+model:
+  name: "deeplabv3plus"
+  encoder: "resnet50"
+  encoder_weights: "imagenet"
+  num_classes: 80  # COCO classes
+  ignore_index: 255
+
+# Training Configuration
+training:
+  batch_size: 16
+  num_workers: 4
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0005
+  optimizer: "adam"
+  scheduler: "cosine"
+  warmup_epochs: 5
+  gradient_clip_val: 0.1
+
+# Data Configuration
+data:
+  train_path: "/dbfs/datasets/coco/train2017"
+  val_path: "/dbfs/datasets/coco/val2017"
+  train_annotations: "/dbfs/datasets/coco/annotations/instances_train2017.json"
+  val_annotations: "/dbfs/datasets/coco/annotations/instances_val2017.json"
+  image_size: 512
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+# Augmentation Configuration
+augmentation:
+  horizontal_flip: true
+  vertical_flip: false
+  rotation: 10
+  brightness_contrast: 0.2
+  hue_saturation: 0.1
+  random_crop: true
+  random_erasing: true
+
+# Distributed Training
+distributed:
+  backend: "ray"
+  num_workers: 4
+  use_gpu: true
+  strategy: "ddp"
+
+# MLflow Configuration
+mlflow:
+  experiment_name: "segmentation_deeplabv3"
+  tracking_uri: "databricks"
+  registry_uri: "databricks-uc"
+  model_name: "deeplabv3_segmenter"
+  tags:
+    task: "segmentation"
+    model: "deeplabv3plus"
+    dataset: "coco"
+
+# Logging Configuration
+logging:
+  log_every_n_steps: 50
+  save_top_k: 3
+  monitor: "val_iou"
+  mode: "max" 

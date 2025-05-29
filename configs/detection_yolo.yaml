@@ -1,0 +1,67 @@
+# Model Configuration
+model:
+  name: "yolov8"
+  pretrained: true
+  num_classes: 80  # COCO classes
+  confidence_threshold: 0.25
+  iou_threshold: 0.45
+  max_detections: 300
+
+# Training Configuration
+training:
+  batch_size: 16
+  num_workers: 4
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0005
+  optimizer: "adam"
+  scheduler: "cosine"
+  warmup_epochs: 5
+  gradient_clip_val: 0.1
+
+# Data Configuration
+data:
+  train_path: "/dbfs/datasets/coco/train2017"
+  val_path: "/dbfs/datasets/coco/val2017"
+  train_annotations: "/dbfs/datasets/coco/annotations/instances_train2017.json"
+  val_annotations: "/dbfs/datasets/coco/annotations/instances_val2017.json"
+  image_size: 640
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+# Augmentation Configuration
+augmentation:
+  horizontal_flip: true
+  vertical_flip: false
+  rotation: 10
+  brightness_contrast: 0.2
+  hue_saturation: 0.1
+  mosaic: true
+  mixup: true
+  random_crop: true
+  random_erasing: true
+
+# Distributed Training
+distributed:
+  backend: "ray"
+  num_workers: 4
+  use_gpu: true
+  strategy: "ddp"
+
+# MLflow Configuration
+mlflow:
+  experiment_name: "detection_yolo"
+  tracking_uri: "databricks"
+  registry_uri: "databricks-uc"
+  model_name: "yolo_detector"
+  tags:
+    task: "detection"
+    model: "yolov8"
+    dataset: "coco"
+
+# Logging Configuration
+logging:
+  log_every_n_steps: 50
+  save_top_k: 3
+  monitor: "val_map"
+  mode: "max" 
