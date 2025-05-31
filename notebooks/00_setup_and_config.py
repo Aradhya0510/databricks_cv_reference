@@ -6,87 +6,27 @@
 # MAGIC 
 # MAGIC This notebook sets up the environment and loads configurations for the computer vision tasks.
 # MAGIC 
-# MAGIC ## Configuration Guide
+# MAGIC ## Unity Catalog Setup
 # MAGIC 
-# MAGIC The project uses YAML configuration files to manage settings for different tasks. Here's how to configure your task:
+# MAGIC Before running this notebook, ensure you have:
+# MAGIC 1. Created a Unity Catalog volume for your project
+# MAGIC 2. Granted appropriate permissions to your user
+# MAGIC 3. Mounted the volume in your workspace
 # MAGIC 
-# MAGIC ### 1. Task Configuration
+# MAGIC Example Unity Catalog setup:
+# MAGIC ```sql
+# MAGIC -- Create catalog
+# MAGIC CREATE CATALOG IF NOT EXISTS cv_ref;
 # MAGIC 
-# MAGIC Create a YAML file in the `configs` directory with the following structure:
+# MAGIC -- Create schema
+# MAGIC CREATE SCHEMA IF NOT EXISTS cv_ref.datasets;
 # MAGIC 
-# MAGIC ```yaml
-# MAGIC # Model Configuration
-# MAGIC model:
-# MAGIC   model_name: "nvidia/mit-b0"  # Hugging Face model name
-# MAGIC   num_classes: 19              # Number of classes
-# MAGIC   pretrained: true            # Use pretrained weights
-# MAGIC   learning_rate: 1e-4         # Initial learning rate
-# MAGIC   weight_decay: 1e-4          # Weight decay for regularization
-# MAGIC   scheduler: "cosine"         # Learning rate scheduler
-# MAGIC   epochs: 100                 # Number of training epochs
-# MAGIC   class_names: []             # Optional: List of class names
+# MAGIC -- Create volume
+# MAGIC CREATE VOLUME IF NOT EXISTS cv_ref.datasets.coco_mini;
 # MAGIC 
-# MAGIC # Training Configuration
-# MAGIC training:
-# MAGIC   batch_size: 32              # Batch size for training
-# MAGIC   num_workers: 4              # Number of data loading workers
-# MAGIC   gradient_clip_val: 1.0      # Gradient clipping value
-# MAGIC   early_stopping_patience: 10  # Early stopping patience
-# MAGIC   checkpoint_dir: "checkpoints" # Directory for model checkpoints
-# MAGIC 
-# MAGIC # Data Configuration
-# MAGIC data:
-# MAGIC   train_path: "train"         # Path to training data
-# MAGIC   val_path: "val"             # Path to validation data
-# MAGIC   test_path: "test"           # Path to test data
-# MAGIC   image_size: [512, 512]      # Input image size
-# MAGIC   augment: true               # Use data augmentation
+# MAGIC -- Grant permissions
+# MAGIC GRANT ALL PRIVILEGES ON VOLUME cv_ref.datasets.coco_mini TO `aradhya.chouhan@databricks.com`;
 # MAGIC ```
-# MAGIC 
-# MAGIC ### 2. Task-Specific Settings
-# MAGIC 
-# MAGIC #### Detection Task
-# MAGIC ```yaml
-# MAGIC model:
-# MAGIC   model_name: "facebook/detr-resnet-50"
-# MAGIC   num_classes: 80  # COCO classes
-# MAGIC   confidence_threshold: 0.5
-# MAGIC   iou_threshold: 0.5
-# MAGIC   max_detections: 100
-# MAGIC ```
-# MAGIC 
-# MAGIC #### Classification Task
-# MAGIC ```yaml
-# MAGIC model:
-# MAGIC   model_name: "microsoft/resnet-50"
-# MAGIC   num_classes: 1000  # ImageNet classes
-# MAGIC   dropout: 0.2
-# MAGIC   mixup_alpha: 0.2
-# MAGIC ```
-# MAGIC 
-# MAGIC #### Segmentation Task
-# MAGIC ```yaml
-# MAGIC model:
-# MAGIC   model_name: "nvidia/mit-b0"
-# MAGIC   num_classes: 19  # Cityscapes classes
-# MAGIC   segmentation_type: "semantic"  # or "instance" or "panoptic"
-# MAGIC   aux_loss_weight: 0.4
-# MAGIC   mask_threshold: 0.5
-# MAGIC ```
-# MAGIC 
-# MAGIC ### 3. Unity Catalog Volumes
-# MAGIC 
-# MAGIC The project uses Unity Catalog volumes for storing:
-# MAGIC - Configuration files
-# MAGIC - Model checkpoints
-# MAGIC - Training logs
-# MAGIC - Evaluation results
-# MAGIC 
-# MAGIC These are mounted at the following locations:
-# MAGIC - Configs: `/Volumes/main/cv_ref/configs`
-# MAGIC - Checkpoints: `/Volumes/main/cv_ref/checkpoints`
-# MAGIC - Logs: `/Volumes/main/cv_ref/logs`
-# MAGIC - Results: `/Volumes/main/cv_ref/results`
 
 # COMMAND ----------
 
@@ -116,9 +56,14 @@ from src.utils.logging import setup_logger, get_metric_logger
 # COMMAND ----------
 
 # DBTITLE 1,Initialize Logging
+# Get the Unity Catalog volume path from environment or use default
+volume_path = os.getenv("UNITY_CATALOG_VOLUME", "/Volumes/cv_ref/datasets/coco_mini")
+log_dir = f"{volume_path}/logs"
+os.makedirs(log_dir, exist_ok=True)
+
 logger = setup_logger(
     name="cv_pipeline",
-    log_file="/Volumes/main/cv_ref/logs/setup.log"
+    log_file=f"{log_dir}/setup.log"
 )
 
 # COMMAND ----------
@@ -133,8 +78,15 @@ def setup_config(task: str, config_path: str = None):
         logger.info(f"Creating default configuration for {task}")
         config = get_default_config(task)
         
+        # Update paths to use Unity Catalog volume
+        config['training']['checkpoint_dir'] = f"{volume_path}/checkpoints"
+        config['data']['train_path'] = f"{volume_path}/data/train"
+        config['data']['val_path'] = f"{volume_path}/data/val"
+        config['data']['test_path'] = f"{volume_path}/data/test"
+        
         # Save default config
         if config_path:
+            os.makedirs(os.path.dirname(config_path), exist_ok=True)
             save_config(config, config_path)
             logger.info(f"Saved default configuration to {config_path}")
     
@@ -154,14 +106,14 @@ def setup_mlflow(experiment_name: str):
 # DBTITLE 1,Main Setup Function
 def setup_pipeline(task: str, experiment_name: str):
     """Main setup function for the pipeline."""
-    # Create necessary directories in Unity Catalog volumes
-    os.makedirs("/Volumes/main/cv_ref/logs", exist_ok=True)
-    os.makedirs("/Volumes/main/cv_ref/configs", exist_ok=True)
-    os.makedirs("/Volumes/main/cv_ref/checkpoints", exist_ok=True)
-    os.makedirs("/Volumes/main/cv_ref/results", exist_ok=True)
+    # Create necessary directories in Unity Catalog volume
+    os.makedirs(f"{volume_path}/logs", exist_ok=True)
+    os.makedirs(f"{volume_path}/configs", exist_ok=True)
+    os.makedirs(f"{volume_path}/checkpoints", exist_ok=True)
+    os.makedirs(f"{volume_path}/results", exist_ok=True)
     
     # Setup configuration
-    config_path = f"/Volumes/main/cv_ref/configs/{task}_config.yaml"
+    config_path = f"{volume_path}/configs/{task}_config.yaml"
     config = setup_config(task, config_path)
     
     # Setup MLflow
