@@ -26,29 +26,30 @@ sys.path.append(str(Path(__file__).parent.parent))
 class UnifiedTrainer:
     """Unified trainer for all computer vision tasks using Ray on Databricks."""
     
-    def __init__(self, task: str, model_class, data_module_class, config_path: str, distributed: bool = False):
+    def __init__(self, task: str, model_class=None, data_module_class=None, config_path: str = None, distributed: bool = False, model_config_class=None, config: dict = None, model=None, data_module=None):
         """Initialize the trainer.
         
         Args:
             task: Task type ('classification', 'detection', or 'segmentation')
-            model_class: Model class to use
-            data_module_class: Data module class to use
-            config_path: Path to the configuration file
+            model_class: Model class to use (optional if model is provided)
+            data_module_class: Data module class to use (optional if data_module is provided)
+            config_path: Path to the configuration file (optional if config is provided)
             distributed: Whether to use distributed training with Ray (default: False)
+            model_config_class: Optional config class for the model (default: None)
+            config: Optional pre-loaded configuration (default: None)
+            model: Optional pre-initialized model (default: None)
+            data_module: Optional pre-initialized data module (default: None)
         """
         self.task = task
         self.model_class = model_class
+        self.model_config_class = model_config_class
         self.data_module_class = data_module_class
         self.config_path = config_path
-        self.config = self._load_config()
-        self.model = None
-        self.data_module = None
+        self.config = config if config is not None else self._load_config()
+        self.model = model
+        self.data_module = data_module
         self.trainer = None
         self.distributed = distributed
-        
-        # Set up MLflow
-        mlflow.set_tracking_uri("databricks")
-        mlflow.set_experiment(f"/Users/aradhya.chouhan/experiments/{task}_pipeline")
     
     def _load_config(self) -> dict:
         """Load configuration from YAML file."""
@@ -56,12 +57,18 @@ class UnifiedTrainer:
             return yaml.safe_load(f)
     
     def _init_model(self):
-        """Initialize the model."""
-        self.model = self.model_class(**self.config['model'])
+        """Initialize the model if not already initialized."""
+        if self.model is None:
+            if self.model_config_class is not None:
+                model_config = self.model_config_class(**self.config['model'])
+                self.model = self.model_class(model_config)
+            else:
+                self.model = self.model_class(**self.config['model'])
     
     def _init_data_module(self):
-        """Initialize the data module."""
-        self.data_module = self.data_module_class(**self.config['data'])
+        """Initialize the data module if not already initialized."""
+        if self.data_module is None:
+            self.data_module = self.data_module_class(**self.config['data'])
     
     def _init_callbacks(self):
         """Initialize training callbacks."""
@@ -112,11 +119,11 @@ class UnifiedTrainer:
             self.trainer = prepare_trainer(self.trainer)
         else:
             # Local training with PyTorch Lightning
+            # In notebook environment, use single GPU to avoid multiprocessing issues
             self.trainer = pl.Trainer(
                 max_epochs=self.config['training']['max_epochs'],
-                accelerator="auto",
-                devices="auto",
-                strategy="ddp" if torch.cuda.device_count() > 1 else None,
+                accelerator="gpu" if torch.cuda.is_available() else "cpu",
+                devices=1,  # Use single GPU
                 callbacks=callbacks,
                 log_every_n_steps=self.config['training']['log_every_n_steps']
             )

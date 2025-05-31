@@ -4,194 +4,347 @@
 # MAGIC %md
 # MAGIC # Hyperparameter Tuning
 # MAGIC 
-# MAGIC This notebook demonstrates how to perform hyperparameter tuning for the DETR model using Ray Tune.
+# MAGIC This notebook handles hyperparameter optimization for computer vision models.
 # MAGIC 
-# MAGIC ## Steps:
-# MAGIC 1. Define the hyperparameter search space
-# MAGIC 2. Configure Ray Tune for distributed optimization
-# MAGIC 3. Run hyperparameter tuning with MLflow tracking
-# MAGIC 4. Analyze and visualize tuning results
-# MAGIC 5. Select the best hyperparameters
+# MAGIC ## Hyperparameter Tuning Guide
+# MAGIC 
+# MAGIC ### 1. Search Space Configuration
+# MAGIC 
+# MAGIC Configure the hyperparameter search space in the YAML config:
+# MAGIC 
+# MAGIC ```yaml
+# MAGIC tuning:
+# MAGIC   # Base search space
+# MAGIC   base_space:
+# MAGIC     learning_rate:
+# MAGIC       type: "loguniform"
+# MAGIC       min: 1e-5
+# MAGIC       max: 1e-3
+# MAGIC     weight_decay:
+# MAGIC       type: "loguniform"
+# MAGIC       min: 1e-5
+# MAGIC       max: 1e-2
+# MAGIC     batch_size:
+# MAGIC       type: "choice"
+# MAGIC       values: [16, 32, 64]
+# MAGIC     scheduler:
+# MAGIC       type: "choice"
+# MAGIC       values: ["cosine", "linear", "step"]
+# MAGIC   
+# MAGIC   # Task-specific search spaces
+# MAGIC   detection_space:
+# MAGIC     confidence_threshold:
+# MAGIC       type: "uniform"
+# MAGIC       min: 0.3
+# MAGIC       max: 0.7
+# MAGIC     iou_threshold:
+# MAGIC       type: "uniform"
+# MAGIC       min: 0.3
+# MAGIC       max: 0.7
+# MAGIC     max_detections:
+# MAGIC       type: "choice"
+# MAGIC       values: [50, 100, 200]
+# MAGIC   
+# MAGIC   classification_space:
+# MAGIC     dropout:
+# MAGIC       type: "uniform"
+# MAGIC       min: 0.1
+# MAGIC       max: 0.5
+# MAGIC     mixup_alpha:
+# MAGIC       type: "uniform"
+# MAGIC       min: 0.1
+# MAGIC       max: 0.5
+# MAGIC   
+# MAGIC   segmentation_space:
+# MAGIC     aux_loss_weight:
+# MAGIC       type: "uniform"
+# MAGIC       min: 0.1
+# MAGIC       max: 0.5
+# MAGIC     mask_threshold:
+# MAGIC       type: "uniform"
+# MAGIC       min: 0.3
+# MAGIC       max: 0.7
+# MAGIC ```
+# MAGIC 
+# MAGIC ### 2. Tuning Configuration
+# MAGIC 
+# MAGIC Configure the tuning process in the YAML config:
+# MAGIC 
+# MAGIC ```yaml
+# MAGIC tuning:
+# MAGIC   # Tuning settings
+# MAGIC   num_trials: 20               # Number of trials
+# MAGIC   metric: "val_loss"          # Metric to optimize
+# MAGIC   mode: "min"                 # Optimization mode
+# MAGIC   grace_period: 10            # Grace period for early stopping
+# MAGIC   reduction_factor: 2         # Reduction factor for ASHA
+# MAGIC   
+# MAGIC   # Resource settings
+# MAGIC   resources:
+# MAGIC     cpu: 4                    # CPUs per trial
+# MAGIC     gpu: 1                    # GPUs per trial
+# MAGIC   
+# MAGIC   # Logging settings
+# MAGIC   log_dir: "/Volumes/main/cv_ref/logs/tuning"  # Log directory
+# MAGIC   results_dir: "/Volumes/main/cv_ref/results/tuning"  # Results directory
+# MAGIC ```
+# MAGIC 
+# MAGIC ### 3. Available Schedulers
+# MAGIC 
+# MAGIC The project supports various hyperparameter tuning schedulers:
+# MAGIC 
+# MAGIC - `ASHAScheduler`: Asynchronous Successive Halving Algorithm
+# MAGIC - `HyperBandScheduler`: HyperBand algorithm
+# MAGIC - `MedianStoppingRule`: Median stopping rule
+# MAGIC - `PopulationBasedTraining`: Population-based training
+# MAGIC 
+# MAGIC Configure the scheduler in the YAML config:
+# MAGIC 
+# MAGIC ```yaml
+# MAGIC tuning:
+# MAGIC   scheduler:
+# MAGIC     type: "asha"              # or "hyperband", "median", "pbt"
+# MAGIC     metric: "val_loss"
+# MAGIC     mode: "min"
+# MAGIC     grace_period: 10
+# MAGIC     reduction_factor: 2
+# MAGIC ```
 
 # COMMAND ----------
 
+# DBTITLE 1,Import Dependencies
+import sys
 import os
-import yaml
+from pathlib import Path
 import mlflow
-import torch
 import ray
 from ray import tune
 from ray.tune.schedulers import ASHAScheduler
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+from ray.tune.integration.mlflow import MLflowLoggerCallback
 
+# Add the project root to Python path
+project_root = "/Workspace/Repos/Databricks_CV_ref"
+sys.path.append(project_root)
+
+from src.utils.logging import setup_logger, get_metric_logger
 from src.training.trainer import UnifiedTrainer
 from src.tasks.detection.model import DetectionModel
-from src.tasks.detection.data import DetectionDataModule
+from src.tasks.classification.model import ClassificationModel
+from src.tasks.segmentation.model import SegmentationModel
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Load Base Configuration
-
-# COMMAND ----------
-
-# Load distributed configuration as base
-config_path = "/dbfs/FileStore/configs/detection_distributed.yaml"
-with open(config_path, "r") as f:
-    base_config = yaml.safe_load(f)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Define Search Space
-
-# COMMAND ----------
-
-# Define hyperparameter search space
-search_space = {
-    "model": {
-        "confidence_threshold": tune.uniform(0.5, 0.9),
-        "iou_threshold": tune.uniform(0.3, 0.7),
-        "max_detections": tune.choice([50, 100, 150])
-    },
-    "training": {
-        "learning_rate": tune.loguniform(1e-5, 1e-3),
-        "weight_decay": tune.loguniform(1e-5, 1e-3),
-        "warmup_epochs": tune.choice([3, 5, 7]),
-        "gradient_clip_val": tune.uniform(0.1, 0.5)
-    },
-    "data": {
-        "batch_size": tune.choice([16, 32, 64]),
-        "image_size": tune.choice([[800, 800], [1024, 1024]])
-    }
-}
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Initialize Trainer
-
-# COMMAND ----------
-
-# Initialize trainer in distributed mode
-trainer = UnifiedTrainer(
-    task="detection",
-    model_class=DetectionModel,
-    data_module_class=DetectionDataModule,
-    config_path=config_path,
-    distributed=True  # Hyperparameter tuning requires distributed mode
+# DBTITLE 1,Initialize Logging
+logger = setup_logger(
+    name="hparam_tuning",
+    log_file="/Volumes/main/cv_ref/logs/tuning.log"
 )
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Run Hyperparameter Tuning
+# DBTITLE 1,Load Configuration
+def load_task_config(task: str):
+    """Load configuration for the specified task."""
+    config_path = f"/Volumes/main/cv_ref/configs/{task}_config.yaml"
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
 
 # COMMAND ----------
 
-# Start MLflow run
-with mlflow.start_run(run_name="detr_hparam_tuning") as run:
-    # Run hyperparameter tuning
-    best_config = trainer.tune(
-        search_space=search_space,
-        num_trials=20
+# DBTITLE 1,Define Search Space
+def get_search_space(task: str, config: dict):
+    """Define hyperparameter search space for the task."""
+    tuning_config = config['tuning']
+    
+    # Get base space
+    base_space = {}
+    for param, settings in tuning_config['base_space'].items():
+        if settings['type'] == 'loguniform':
+            base_space[param] = tune.loguniform(
+                settings['min'],
+                settings['max']
+            )
+        elif settings['type'] == 'uniform':
+            base_space[param] = tune.uniform(
+                settings['min'],
+                settings['max']
+            )
+        elif settings['type'] == 'choice':
+            base_space[param] = tune.choice(settings['values'])
+    
+    # Get task-specific space
+    task_space = {}
+    task_space_key = f"{task}_space"
+    if task_space_key in tuning_config:
+        for param, settings in tuning_config[task_space_key].items():
+            if settings['type'] == 'loguniform':
+                task_space[param] = tune.loguniform(
+                    settings['min'],
+                    settings['max']
+                )
+            elif settings['type'] == 'uniform':
+                task_space[param] = tune.uniform(
+                    settings['min'],
+                    settings['max']
+                )
+            elif settings['type'] == 'choice':
+                task_space[param] = tune.choice(settings['values'])
+    
+    # Combine spaces
+    search_space = {**base_space, **task_space}
+    return search_space
+
+# COMMAND ----------
+
+# DBTITLE 1,Training Function for Tuning
+def train_tune(config, task: str, data_loaders: dict):
+    """Training function for hyperparameter tuning."""
+    # Initialize model with trial config
+    model_class = get_model_class(task)
+    model = model_class(**config)
+    
+    # Setup trainer
+    trainer = UnifiedTrainer(
+        task=task,
+        model_class=model_class,
+        config=config
     )
     
-    # Log best configuration
-    mlflow.log_params(best_config)
+    # Train model
+    trainer.fit(
+        model=model,
+        train_dataloader=data_loaders['train_loader'],
+        val_dataloader=data_loaders['val_loader']
+    )
+    
+    # Get validation metrics
+    val_metrics = trainer.get_validation_metrics()
+    
+    # Report metrics to Ray Tune
+    tune.report(**val_metrics)
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Analyze Results
+# DBTITLE 1,Setup Ray Tune
+def setup_tune(task: str, config: dict, data_loaders: dict):
+    """Setup Ray Tune for hyperparameter optimization."""
+    tuning_config = config['tuning']
+    
+    # Initialize Ray
+    ray.init()
+    
+    # Get search space
+    search_space = get_search_space(task, config)
+    
+    # Setup scheduler
+    scheduler_config = tuning_config['scheduler']
+    if scheduler_config['type'] == 'asha':
+        scheduler = ASHAScheduler(
+            metric=scheduler_config['metric'],
+            mode=scheduler_config['mode'],
+            max_t=100,
+            grace_period=scheduler_config['grace_period'],
+            reduction_factor=scheduler_config['reduction_factor']
+        )
+    # Add other scheduler types here
+    
+    # Setup MLflow callback
+    mlflow_callback = MLflowLoggerCallback(
+        tracking_uri=mlflow.get_tracking_uri(),
+        registry_uri=mlflow.get_registry_uri(),
+        experiment_name=f"{task}_tuning"
+    )
+    
+    # Run hyperparameter tuning
+    analysis = tune.run(
+        tune.with_parameters(
+            train_tune,
+            task=task,
+            data_loaders=data_loaders
+        ),
+        config=search_space,
+        num_samples=tuning_config['num_trials'],
+        scheduler=scheduler,
+        callbacks=[mlflow_callback],
+        resources_per_trial=tuning_config['resources']
+    )
+    
+    return analysis
 
 # COMMAND ----------
 
-# Get tuning results
-client = mlflow.tracking.MlflowClient()
-experiment = client.get_experiment_by_name("/Users/aradhya.chouhan/experiments/detr_coco_detection")
-runs = client.search_runs(experiment.experiment_id)
-
-# Convert results to DataFrame
-results = []
-for run in runs:
-    if "trial" in run.data.tags:
-        results.append({
-            "trial": run.data.tags["trial"],
-            "val_map": run.data.metrics.get("val_map", 0),
-            "val_loss": run.data.metrics.get("val_loss", 0),
-            **run.data.params
-        })
-df = pd.DataFrame(results)
+# DBTITLE 1,Main Tuning Function
+def tune_hyperparameters(
+    task: str,
+    config: dict,
+    data_loaders: dict
+):
+    """Main function for hyperparameter tuning."""
+    tuning_config = config['tuning']
+    
+    # Setup MLflow
+    mlflow_logger = get_metric_logger(f"{task}_tuning")
+    
+    # Run tuning
+    analysis = setup_tune(task, config, data_loaders)
+    
+    # Get best trial
+    best_trial = analysis.get_best_trial(
+        metric=tuning_config['metric'],
+        mode=tuning_config['mode']
+    )
+    
+    # Log best parameters
+    logger.info(f"Best trial parameters: {best_trial.config}")
+    mlflow_logger.log_params(best_trial.config)
+    
+    # Save tuning results
+    results = {
+        'best_trial': best_trial.config,
+        'best_metric': best_trial.last_result[tuning_config['metric']],
+        'all_trials': analysis.results
+    }
+    
+    results_path = f"/Volumes/main/cv_ref/results/{task}_tuning_results.yaml"
+    with open(results_path, 'w') as f:
+        yaml.dump(results, f)
+    
+    # Update config with best parameters
+    config.update(best_trial.config)
+    
+    return config, analysis
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Visualize Results
+# DBTITLE 1,Example Usage
+# Example: Tune detection model
+task = "detection"
+config = load_task_config(task)
 
-# COMMAND ----------
+# Load data (from previous notebook)
+data_loaders = {
+    'train_loader': train_loader,
+    'val_loader': val_loader,
+    'test_loader': test_loader
+}
 
-# Plot hyperparameter importance
-plt.figure(figsize=(12, 6))
-sns.barplot(
-    data=df.corr()["val_map"].sort_values(ascending=False).reset_index(),
-    x="val_map",
-    y="index"
+# Run hyperparameter tuning
+best_config, analysis = tune_hyperparameters(
+    task=task,
+    config=config,
+    data_loaders=data_loaders
 )
-plt.title("Hyperparameter Importance")
-plt.xlabel("Correlation with Validation mAP")
-plt.tight_layout()
-plt.show()
 
-# COMMAND ----------
-
-# Plot learning rate vs validation mAP
-plt.figure(figsize=(8, 6))
-sns.scatterplot(
-    data=df,
-    x="learning_rate",
-    y="val_map",
-    hue="batch_size",
-    size="warmup_epochs"
-)
-plt.xscale("log")
-plt.title("Learning Rate vs Validation mAP")
-plt.xlabel("Learning Rate")
-plt.ylabel("Validation mAP")
-plt.tight_layout()
-plt.show()
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Save Best Configuration
-
-# COMMAND ----------
-
-# Update base configuration with best parameters
-best_config_full = base_config.copy()
-for key, value in best_config.items():
-    if key in best_config_full:
-        best_config_full[key].update(value)
-    else:
-        best_config_full[key] = value
-
-# Save best configuration
-best_config_path = "/dbfs/FileStore/configs/detection_best.yaml"
-with open(best_config_path, "w") as f:
-    yaml.dump(best_config_full, f)
-
-print(f"Best configuration saved to: {best_config_path}")
+# Display results
+print("Best trial parameters:")
+print(yaml.dump(best_config, default_flow_style=False))
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Next Steps
 # MAGIC 
-# MAGIC The hyperparameter tuning is complete. You can now:
-# MAGIC 
-# MAGIC 1. Use the best configuration to train the final model
-# MAGIC 2. Evaluate the model on the test set
-# MAGIC 3. Register and deploy the model for inference 
+# MAGIC 1. Review tuning results
+# MAGIC 2. Train model with best parameters
+# MAGIC 3. Proceed to model evaluation notebook 

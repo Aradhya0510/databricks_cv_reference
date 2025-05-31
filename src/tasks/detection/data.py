@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 from transformers import AutoFeatureExtractor
+from PIL import Image
 
 @dataclass
 class DetectionDataConfig:
@@ -49,8 +50,9 @@ class COCODetectionDataset(torch.utils.data.Dataset):
         if model_name:
             self.feature_extractor = AutoFeatureExtractor.from_pretrained(model_name)
         
-        # Load class names
+        # Load class names and create category to index mapping
         self.class_names = [cat["name"] for cat in self.coco.loadCats(self.coco.getCatIds())]
+        self.cat_to_idx = {cat["id"]: idx for idx, cat in enumerate(self.coco.loadCats(self.coco.getCatIds()))}
         
     def __len__(self) -> int:
         return len(self.ids)
@@ -80,25 +82,29 @@ class COCODetectionDataset(torch.utils.data.Dataset):
                 bbox[0] + bbox[2],
                 bbox[1] + bbox[3]
             ])
-            labels.append(ann['category_id'])
+            # Convert category ID to zero-based index
+            labels.append(self.cat_to_idx[ann['category_id']])
         
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
         
         target = {
             'boxes': boxes,
-            'labels': labels,
+            'class_labels': labels,
             'image_id': torch.tensor([img_id])
         }
         
         # Apply transforms
         if self.model_name:
-            # Use Hugging Face feature extractor
+            # Convert OpenCV image to PIL Image
+            image = Image.fromarray(image)
+            
+            # Use Hugging Face feature extractor with consistent size
             inputs = self.feature_extractor(
                 image,
                 return_tensors="pt",
                 do_resize=True,
-                size=self.feature_extractor.size,
+                size=self.image_size,
                 do_normalize=True
             )
             return {
@@ -111,7 +117,7 @@ class COCODetectionDataset(torch.utils.data.Dataset):
                 transformed = self.transform(image=image, bboxes=boxes, labels=labels)
                 image = transformed['image']
                 target['boxes'] = torch.as_tensor(transformed['bboxes'], dtype=torch.float32)
-                target['labels'] = torch.as_tensor(transformed['labels'], dtype=torch.int64)
+                target['class_labels'] = torch.as_tensor(transformed['labels'], dtype=torch.int64)
             
             return {
                 "pixel_values": image,
@@ -227,7 +233,21 @@ class DetectionDataModule(pl.LightningDataModule):
         for sample in batch:
             images.append(sample["pixel_values"])
             targets.append(sample["labels"])
-        return torch.stack(images), targets
+        
+        # Stack images
+        images = torch.stack(images)
+        
+        # Collate targets
+        collated_targets = {
+            "boxes": torch.cat([t["boxes"] for t in targets]),
+            "class_labels": torch.cat([t["class_labels"] for t in targets]),
+            "image_id": torch.cat([t["image_id"] for t in targets])
+        }
+        
+        return {
+            "pixel_values": images,
+            "labels": collated_targets
+        }
     
     @property
     def class_names(self) -> List[str]:

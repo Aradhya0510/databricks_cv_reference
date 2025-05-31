@@ -4,190 +4,266 @@
 # MAGIC %md
 # MAGIC # Data Preparation
 # MAGIC 
-# MAGIC This notebook demonstrates how to prepare COCO format data for model training, using the COCO handler for format conversion and model-specific processors for data preprocessing.
+# MAGIC This notebook handles dataset loading and preprocessing for computer vision tasks.
 # MAGIC 
-# MAGIC ## Steps:
-# MAGIC 1. Load and validate COCO format data
-# MAGIC 2. Set up model-specific image processing
-# MAGIC 3. Prepare data for training
-# MAGIC 4. Save processed data
+# MAGIC ## Data Configuration Guide
+# MAGIC 
+# MAGIC ### 1. Dataset Structure
+# MAGIC 
+# MAGIC The project expects datasets in COCO format, organized as follows:
+# MAGIC 
+# MAGIC ```
+# MAGIC /Volumes/main/cv_ref/datasets/
+# MAGIC ├── train/
+# MAGIC │   ├── images/
+# MAGIC │   └── annotations.json
+# MAGIC ├── val/
+# MAGIC │   ├── images/
+# MAGIC │   └── annotations.json
+# MAGIC └── test/
+# MAGIC     ├── images/
+# MAGIC     └── annotations.json
+# MAGIC ```
+# MAGIC 
+# MAGIC ### 2. Data Configuration
+# MAGIC 
+# MAGIC Configure your dataset in the task's YAML config file:
+# MAGIC 
+# MAGIC ```yaml
+# MAGIC data:
+# MAGIC   # Dataset paths in Unity Catalog volumes
+# MAGIC   train_path: "/Volumes/main/cv_ref/datasets/train"
+# MAGIC   val_path: "/Volumes/main/cv_ref/datasets/val"
+# MAGIC   test_path: "/Volumes/main/cv_ref/datasets/test"
+# MAGIC   
+# MAGIC   # Data processing settings
+# MAGIC   image_size: [512, 512]      # Input image size
+# MAGIC   augment: true               # Use data augmentation
+# MAGIC   num_workers: 4              # Number of data loading workers
+# MAGIC   pin_memory: true            # Use pinned memory for faster data transfer
+# MAGIC   
+# MAGIC   # Task-specific settings
+# MAGIC   task_type: "detection"      # or "classification" or "segmentation"
+# MAGIC   segmentation_type: "semantic"  # for segmentation tasks
+# MAGIC ```
+# MAGIC 
+# MAGIC ### 3. Data Augmentation
+# MAGIC 
+# MAGIC The project supports various augmentation strategies. Configure them in the config:
+# MAGIC 
+# MAGIC ```yaml
+# MAGIC data:
+# MAGIC   augmentations:
+# MAGIC     horizontal_flip: true
+# MAGIC     vertical_flip: false
+# MAGIC     rotation: 15              # Max rotation in degrees
+# MAGIC     color_jitter:
+# MAGIC       brightness: 0.2
+# MAGIC       contrast: 0.2
+# MAGIC       saturation: 0.2
+# MAGIC       hue: 0.1
+# MAGIC     random_crop: true
+# MAGIC     random_resize: [0.8, 1.2]  # Scale range
+# MAGIC ```
 
 # COMMAND ----------
 
+# DBTITLE 1,Import Dependencies
+import sys
 import os
-import json
-import yaml
-import mlflow
-import torch
-from PIL import Image
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pycocotools.coco import COCO
-import numpy as np
 from pathlib import Path
-from transformers import DetrImageProcessor, DetrImageProcessorFast
+import mlflow
+import yaml
 
-from src.tasks.detection.data import DetectionDataModule, DetectionDataConfig
-from src.utils.coco_handler import COCOHandler
+# Add the project root to Python path
+project_root = "/Workspace/Repos/Databricks_CV_ref"
+sys.path.append(project_root)
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Load Configuration
-
-# COMMAND ----------
-
-# Load configuration
-config_path = "/dbfs/FileStore/configs/detection.yaml"
-with open(config_path, "r") as f:
-    config = yaml.safe_load(f)
+from src.utils.logging import setup_logger, get_metric_logger
+from src.data.coco_handler import COCOHandler
+from src.data.dataset import BaseDataset
+from src.data.transforms import get_transforms
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Initialize COCO Handler
-
-# COMMAND ----------
-
-# Initialize COCO handler
-coco_handler = COCOHandler(
-    annotation_file=config["data"]["annotation_file"]
-)
-
-# Print dataset statistics
-print(f"Number of images: {len(coco_handler.coco_data['images'])}")
-print(f"Number of annotations: {len(coco_handler.coco_data['annotations'])}")
-print(f"Number of categories: {len(coco_handler.coco_data['categories'])}")
-print("\nCategories:")
-for cat in coco_handler.coco_data["categories"]:
-    print(f"- {cat['name']} (id: {cat['id']})")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Set up Model-Specific Processing
-
-# COMMAND ----------
-
-# Initialize DETR image processor
-processor = DetrImageProcessorFast.from_pretrained(
-    config["model"]["name"],
-    size=config["data"]["image_size"]
+# DBTITLE 1,Initialize Logging
+logger = setup_logger(
+    name="data_preparation",
+    log_file="/Volumes/main/cv_ref/logs/data_prep.log"
 )
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Prepare Data for Training
+# DBTITLE 1,Load Configuration
+def load_task_config(task: str):
+    """Load configuration for the specified task."""
+    config_path = f"/Volumes/main/cv_ref/configs/{task}_config.yaml"
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
 
 # COMMAND ----------
 
-def prepare_sample(image_id: int, image_dir: str) -> Dict:
-    """Prepare a single sample for training."""
-    # Get image info and annotations
-    image_info = coco_handler.get_image_info(image_id)
-    annotations = coco_handler.get_annotations(image_id)
+# DBTITLE 1,Setup Data Handler
+def setup_data_handler(task: str, config: dict):
+    """Setup data handler for the specified task."""
+    data_config = config['data']
     
-    # Load image
-    image_path = Path(image_dir) / image_info["file_name"]
-    image = Image.open(image_path).convert("RGB")
-    
-    # Prepare target
-    target = coco_handler.prepare_target(annotations)
-    
-    # Process image and target
-    inputs = processor(
-        images=image,
-        annotations=target,
-        return_tensors="pt"
+    # Initialize COCO handler
+    coco_handler = COCOHandler(
+        train_path=data_config['train_path'],
+        val_path=data_config['val_path'],
+        test_path=data_config.get('test_path'),
+        image_size=data_config['image_size']
     )
     
-    # Add image ID
-    inputs["image_id"] = image_id
+    # Get transforms
+    transforms = get_transforms(
+        task=task,
+        image_size=data_config['image_size'],
+        augment=data_config['augment'],
+        augmentations=data_config.get('augmentations', {})
+    )
     
-    return inputs
+    return coco_handler, transforms
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Visualize Sample
-
-# COMMAND ----------
-
-def visualize_sample(image_id: int, image_dir: str):
-    """Visualize a sample with annotations."""
-    # Get image info and annotations
-    image_info = coco_handler.get_image_info(image_id)
-    annotations = coco_handler.get_annotations(image_id)
+# DBTITLE 1,Prepare Dataset
+def prepare_dataset(task: str, coco_handler: COCOHandler, transforms: dict):
+    """Prepare dataset for the specified task."""
+    # Create dataset instances
+    train_dataset = BaseDataset(
+        task=task,
+        data_handler=coco_handler,
+        split='train',
+        transform=transforms['train']
+    )
     
-    # Load image
-    image_path = Path(image_dir) / image_info["file_name"]
-    image = Image.open(image_path).convert("RGB")
+    val_dataset = BaseDataset(
+        task=task,
+        data_handler=coco_handler,
+        split='val',
+        transform=transforms['val']
+    )
     
-    # Create figure
-    plt.figure(figsize=(12, 8))
-    plt.imshow(image)
-    
-    # Plot annotations
-    for ann in annotations:
-        bbox = ann["bbox"]  # [x, y, width, height]
-        category = coco_handler.get_category_name(ann["category_id"])
-        
-        # Create rectangle
-        rect = plt.Rectangle(
-            (bbox[0], bbox[1]),
-            bbox[2],
-            bbox[3],
-            fill=False,
-            edgecolor="red",
-            linewidth=2
-        )
-        plt.gca().add_patch(rect)
-        
-        # Add label
-        plt.text(
-            bbox[0],
-            bbox[1] - 5,
-            category,
-            color="red",
-            fontsize=12,
-            bbox=dict(facecolor="white", alpha=0.7)
+    test_dataset = None
+    if coco_handler.test_path:
+        test_dataset = BaseDataset(
+            task=task,
+            data_handler=coco_handler,
+            split='test',
+            transform=transforms['test']
         )
     
-    plt.axis("off")
-    plt.title(f"Image ID: {image_id}")
-    plt.show()
-
-# Visualize a sample
-sample_image_id = coco_handler.coco_data["images"][0]["id"]
-visualize_sample(sample_image_id, config["data"]["train_path"])
+    return train_dataset, val_dataset, test_dataset
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Save Processed Data
+# DBTITLE 1,Create DataLoaders
+def create_dataloaders(
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    config: dict
+):
+    """Create DataLoaders for training, validation, and testing."""
+    from torch.utils.data import DataLoader
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config['training']['batch_size'],
+        shuffle=True,
+        num_workers=config['data']['num_workers'],
+        pin_memory=config['data'].get('pin_memory', True)
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config['training']['batch_size'],
+        shuffle=False,
+        num_workers=config['data']['num_workers'],
+        pin_memory=config['data'].get('pin_memory', True)
+    )
+    
+    test_loader = None
+    if test_dataset:
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=config['training']['batch_size'],
+            shuffle=False,
+            num_workers=config['data']['num_workers'],
+            pin_memory=config['data'].get('pin_memory', True)
+        )
+    
+    return train_loader, val_loader, test_loader
 
 # COMMAND ----------
 
-# Create directories for processed data
-processed_dir = "/dbfs/FileStore/processed_data"
-os.makedirs(processed_dir, exist_ok=True)
+# DBTITLE 1,Main Data Preparation Function
+def prepare_data(task: str, config: dict):
+    """Main function to prepare data for training."""
+    # Setup data handler
+    coco_handler, transforms = setup_data_handler(task, config)
+    
+    # Prepare datasets
+    train_dataset, val_dataset, test_dataset = prepare_dataset(
+        task, coco_handler, transforms
+    )
+    
+    # Create dataloaders
+    train_loader, val_loader, test_loader = create_dataloaders(
+        train_dataset, val_dataset, test_dataset, config
+    )
+    
+    # Log dataset statistics
+    logger.info(f"Train dataset size: {len(train_dataset)}")
+    logger.info(f"Validation dataset size: {len(val_dataset)}")
+    if test_dataset:
+        logger.info(f"Test dataset size: {len(test_dataset)}")
+    
+    # Save dataset statistics
+    stats = {
+        'train_size': len(train_dataset),
+        'val_size': len(val_dataset),
+        'test_size': len(test_dataset) if test_dataset else 0,
+        'num_classes': config['model']['num_classes'],
+        'image_size': config['data']['image_size']
+    }
+    
+    stats_path = f"/Volumes/main/cv_ref/results/{task}_dataset_stats.yaml"
+    with open(stats_path, 'w') as f:
+        yaml.dump(stats, f)
+    
+    return {
+        'train_loader': train_loader,
+        'val_loader': val_loader,
+        'test_loader': test_loader,
+        'coco_handler': coco_handler
+    }
 
-# Save processor configuration
-processor.save_pretrained(f"{processed_dir}/processor_config")
+# COMMAND ----------
 
-# Save COCO handler state
-torch.save(coco_handler, f"{processed_dir}/coco_handler.pt")
+# DBTITLE 1,Example Usage
+# Example: Prepare detection data
+task = "detection"
+config = load_task_config(task)
 
-print(f"Processed data saved to: {processed_dir}")
+data_loaders = prepare_data(task, config)
+
+# Display sample batch
+sample_batch = next(iter(data_loaders['train_loader']))
+print("Sample batch keys:", sample_batch.keys())
+print("Sample batch shapes:")
+for key, value in sample_batch.items():
+    if hasattr(value, 'shape'):
+        print(f"{key}: {value.shape}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Next Steps
 # MAGIC 
-# MAGIC The data has been prepared and saved. You can now:
-# MAGIC 
-# MAGIC 1. Use the processed data for model training
-# MAGIC 2. Use the COCO handler for evaluation and prediction
-# MAGIC 3. Visualize model predictions 
+# MAGIC 1. Review the prepared data
+# MAGIC 2. Check data statistics and distributions
+# MAGIC 3. Proceed to model training notebook 
