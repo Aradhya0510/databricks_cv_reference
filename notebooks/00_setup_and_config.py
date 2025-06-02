@@ -52,6 +52,9 @@ from src.config import (
     save_config
 )
 from src.utils.logging import setup_logger, get_metric_logger
+from src.tasks.detection.model import DetectionModel
+from src.tasks.classification.model import ClassificationModel
+from src.tasks.segmentation.model import SegmentationModel
 
 # COMMAND ----------
 
@@ -79,10 +82,10 @@ def setup_config(task: str, config_path: str = None):
         config = get_default_config(task)
         
         # Update paths to use Unity Catalog volume
-        config['training']['checkpoint_dir'] = f"{volume_path}/checkpoints"
-        config['data']['train_path'] = f"{volume_path}/data/train"
-        config['data']['val_path'] = f"{volume_path}/data/val"
-        config['data']['test_path'] = f"{volume_path}/data/test"
+        config['training']['checkpoint_dir'] = f"{volume_path}/checkpoints/{task}"
+        config['data']['train_path'] = f"{volume_path}/data/{task}/train"
+        config['data']['val_path'] = f"{volume_path}/data/{task}/val"
+        config['data']['test_path'] = f"{volume_path}/data/{task}/test"
         
         # Save default config
         if config_path:

@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torchmetrics import Dice, JaccardIndex, Accuracy, Precision, Recall, MeanAveragePrecision
+from torchmetrics.classification import Dice, JaccardIndex, Accuracy, Precision, Recall
+from torchmetrics.detection import MeanAveragePrecision
 from transformers import (
     AutoModelForSemanticSegmentation,
     AutoModelForInstanceSegmentation,

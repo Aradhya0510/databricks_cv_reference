@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torchmetrics import Accuracy, F1Score, Precision, Recall
+from torchmetrics.classification import Accuracy, F1Score, Precision, Recall
 from transformers import AutoModelForImageClassification, AutoConfig, PreTrainedModel
 from .adapters import get_output_adapter
 

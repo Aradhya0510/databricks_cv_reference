@@ -68,7 +68,7 @@ class DETROutputAdapter(OutputAdapter):
         return {
             "loss": outputs.loss,
             "pred_boxes": outputs.pred_boxes,
-            "pred_logits": outputs.pred_logits,
+            "pred_logits": outputs.logits,
             "loss_dict": outputs.loss_dict
         }
     
@@ -79,7 +79,7 @@ class DETROutputAdapter(OutputAdapter):
             targets: Standard format targets
             
         Returns:
-            Adapted targets in DETR format
+            Adapted targets in model-specific format
         """
         # Convert targets to list of dictionaries
         target_list = []
@@ -99,7 +99,8 @@ class DETROutputAdapter(OutputAdapter):
                 # Add previous image's targets
                 target_list.append({
                     "boxes": torch.stack(current_boxes),
-                    "labels": torch.stack(current_labels)
+                    "labels": torch.stack(current_labels),
+                    "class_labels": torch.stack(current_labels)  # Keep both keys for compatibility
                 })
                 # Start new image
                 current_image_id = targets["image_id"][i]
@@ -113,10 +114,11 @@ class DETROutputAdapter(OutputAdapter):
         if current_boxes:
             target_list.append({
                 "boxes": torch.stack(current_boxes),
-                "labels": torch.stack(current_labels)
+                "labels": torch.stack(current_labels),
+                "class_labels": torch.stack(current_labels)  # Keep both keys for compatibility
             })
         
-        return {"targets": target_list}
+        return target_list
     
     def format_predictions(self, outputs: Dict[str, Any]) -> List[Dict[str, torch.Tensor]]:
         """Format DETR outputs for metric computation.
@@ -163,7 +165,8 @@ class DETROutputAdapter(OutputAdapter):
                 # Add previous image's targets
                 target_list.append({
                     "boxes": torch.stack(current_boxes),
-                    "labels": torch.stack(current_labels)
+                    "labels": torch.stack(current_labels),
+                    "class_labels": torch.stack(current_labels)  # Keep both keys for compatibility
                 })
                 # Start new image
                 current_image_id = targets["image_id"][i]
@@ -177,12 +180,13 @@ class DETROutputAdapter(OutputAdapter):
         if current_boxes:
             target_list.append({
                 "boxes": torch.stack(current_boxes),
-                "labels": torch.stack(current_labels)
+                "labels": torch.stack(current_labels),
+                "class_labels": torch.stack(current_labels)  # Keep both keys for compatibility
             })
         
         return target_list
 
-class YOLOOutputAdapter(ModelOutputAdapter):
+class YOLOOutputAdapter(OutputAdapter):
     """Adapter for YOLO model outputs."""
     
     def adapt_output(self, outputs: Any) -> Dict[str, torch.Tensor]:
@@ -197,7 +201,7 @@ class YOLOOutputAdapter(ModelOutputAdapter):
         # Implement YOLO-specific adaptation
         pass
 
-def get_output_adapter(model_name: str) -> ModelOutputAdapter:
+def get_output_adapter(model_name: str) -> OutputAdapter:
     """Get the appropriate output adapter for a model.
     
     Args:

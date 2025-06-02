@@ -19,9 +19,11 @@ class DetectionModelConfig:
     iou_threshold: float = 0.5
     max_detections: int = 100
     learning_rate: float = 1e-4
-    weight_decay: float = 0.01
+    weight_decay: float = 1e-4
     scheduler: str = "cosine"
-    epochs: int = 10
+    scheduler_params: Optional[Dict[str, Any]] = None
+    epochs: int = 100
+    task_type: str = "detection"
     class_names: Optional[List[str]] = None
     model_kwargs: Optional[Dict[str, Any]] = None
 
@@ -55,12 +57,17 @@ class DetectionModel(pl.LightningModule):
             )
             
             # Initialize model with ignore_mismatched_sizes=True to handle class size differences
-            self.model = AutoModelForObjectDetection.from_pretrained(
-                self.config.model_name,
-                config=model_config,
-                ignore_mismatched_sizes=True,  # Allow loading with different class sizes
-                **self.config.model_kwargs or {}
-            )
+            # Force model to CPU during initialization
+            with torch.device('cpu'):
+                self.model = AutoModelForObjectDetection.from_pretrained(
+                    self.config.model_name,
+                    config=model_config,
+                    ignore_mismatched_sizes=True,  # Allow loading with different class sizes
+                    device_map=None,  # Prevent automatic device mapping
+                    **self.config.model_kwargs or {}
+                )
+                # Explicitly move model to CPU
+                self.model = self.model.to('cpu')
             
             # Set model parameters
             self.model.config.confidence_threshold = self.config.confidence_threshold
@@ -306,13 +313,21 @@ class DetectionModel(pl.LightningModule):
         )
         
         if self.config.scheduler == "cosine":
+            scheduler_params = self.config.scheduler_params or {
+                "T_max": self.config.epochs,
+                "eta_min": 1e-6
+            }
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
-                T_max=self.config.epochs,
-                eta_min=1e-6
+                **scheduler_params
             )
-            return [optimizer], [scheduler]
-        
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "epoch"
+                }
+            }
         return optimizer
     
     @classmethod

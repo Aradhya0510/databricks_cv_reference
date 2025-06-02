@@ -42,9 +42,12 @@ import yaml
 project_root = "/Workspace/Repos/Databricks_CV_ref"
 sys.path.append(project_root)
 
-from src.data.coco_handler import COCOHandler
-from src.data.transforms import get_transforms
+# Import project modules
+from src.utils.coco_handler import COCOHandler
 from src.utils.logging import setup_logger
+from src.tasks.detection.data import DetectionDataModule, DetectionDataConfig
+from src.tasks.classification.data import ClassificationDataModule, ClassificationDataConfig
+from src.tasks.segmentation.data import SegmentationDataModule, SegmentationDataConfig
 
 # COMMAND ----------
 
@@ -75,78 +78,37 @@ def load_task_config(task: str):
 
 # COMMAND ----------
 
-# DBTITLE 1,Setup Data Handler
-def setup_data_handler(config):
-    """Initialize COCO handler and get data transformations."""
-    handler = COCOHandler(
-        train_path=config['data']['train_path'],
-        val_path=config['data']['val_path'],
-        test_path=config['data']['test_path']
-    )
+# DBTITLE 1,Setup Data Module
+def setup_data_module(task: str, config):
+    """Initialize data module with configuration."""
+    data_modules = {
+        'detection': (DetectionDataModule, DetectionDataConfig),
+        'classification': (ClassificationDataModule, ClassificationDataConfig),
+        'segmentation': (SegmentationDataModule, SegmentationDataConfig)
+    }
     
-    transforms = get_transforms(
-        image_size=config['data']['image_size'],
-        augment=config['data']['augment']
-    )
+    if task not in data_modules:
+        raise ValueError(f"Unsupported task: {task}")
     
-    return handler, transforms
-
-# COMMAND ----------
-
-# DBTITLE 1,Prepare Dataset
-def prepare_dataset(handler, transforms, config):
-    """Create dataset instances for training, validation, and testing."""
-    train_dataset = handler.get_dataset(
-        split='train',
-        transform=transforms['train']
-    )
+    DataModule, DataConfig = data_modules[task]
     
-    val_dataset = handler.get_dataset(
-        split='val',
-        transform=transforms['val']
-    )
-    
-    test_dataset = None
-    if config['data']['test_path']:
-        test_dataset = handler.get_dataset(
-            split='test',
-            transform=transforms['test']
-        )
-    
-    return train_dataset, val_dataset, test_dataset
-
-# COMMAND ----------
-
-# DBTITLE 1,Create DataLoaders
-def create_dataloaders(train_dataset, val_dataset, test_dataset, config):
-    """Create DataLoader instances for the datasets."""
-    train_loader = DataLoader(
-        train_dataset,
+    data_config = DataConfig(
+        data_path=config['data']['train_path'],
+        annotation_file=config['data']['annotation_file'],
+        image_size=config['data']['image_size'][0],  # Use first dimension as size
+        mean=tuple(config['data']['normalize_mean']),
+        std=tuple(config['data']['normalize_std']),
         batch_size=config['training']['batch_size'],
-        shuffle=True,
-        num_workers=config['data']['num_workers'],
-        pin_memory=config['data']['pin_memory']
+        num_workers=config['training']['num_workers'],
+        horizontal_flip=config['data']['augment']['horizontal_flip'],
+        vertical_flip=config['data']['augment']['vertical_flip'],
+        rotation=config['data']['augment']['rotation'],
+        brightness_contrast=config['data']['augment']['brightness_contrast'],
+        hue_saturation=config['data']['augment']['hue_saturation'],
+        model_name=config['model']['model_name']
     )
     
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=config['training']['batch_size'],
-        shuffle=False,
-        num_workers=config['data']['num_workers'],
-        pin_memory=config['data']['pin_memory']
-    )
-    
-    test_loader = None
-    if test_dataset:
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=config['training']['batch_size'],
-            shuffle=False,
-            num_workers=config['data']['num_workers'],
-            pin_memory=config['data']['pin_memory']
-        )
-    
-    return train_loader, val_loader, test_loader
+    return DataModule(data_config)
 
 # COMMAND ----------
 
@@ -156,26 +118,22 @@ def prepare_data(task: str):
     # Load configuration
     config = load_task_config(task)
     
-    # Setup data handler
-    handler, transforms = setup_data_handler(config)
+    # Setup data module
+    data_module = setup_data_module(task, config)
     
-    # Prepare datasets
-    train_dataset, val_dataset, test_dataset = prepare_dataset(
-        handler, transforms, config
-    )
+    # Setup data module for training
+    data_module.setup('fit')
     
-    # Create dataloaders
-    train_loader, val_loader, test_loader = create_dataloaders(
-        train_dataset, val_dataset, test_dataset, config
-    )
+    # Get dataloaders
+    train_loader = data_module.train_dataloader()
+    val_loader = data_module.val_dataloader()
     
     # Log dataset statistics
     stats = {
-        'train_samples': len(train_dataset),
-        'val_samples': len(val_dataset),
-        'test_samples': len(test_dataset) if test_dataset else 0,
-        'num_classes': handler.num_classes,
-        'class_names': handler.class_names
+        'train_samples': len(data_module.train_dataset),
+        'val_samples': len(data_module.val_dataset),
+        'num_classes': len(data_module.train_dataset.class_names),
+        'class_names': data_module.train_dataset.class_names
     }
     
     # Save statistics
@@ -186,7 +144,7 @@ def prepare_data(task: str):
     
     logger.info(f"Dataset statistics: {stats}")
     
-    return train_loader, val_loader, test_loader
+    return train_loader, val_loader
 
 # COMMAND ----------
 
@@ -194,13 +152,13 @@ def prepare_data(task: str):
 # Example: Prepare data for detection task
 task = "detection"
 
-train_loader, val_loader, test_loader = prepare_data(task)
+train_loader, val_loader = prepare_data(task)
 
 # Display a sample batch
 sample_batch = next(iter(train_loader))
 print("Sample batch keys:", sample_batch.keys())
-print("Image shape:", sample_batch['image'].shape)
-print("Target shape:", sample_batch['target'].shape)
+print("Image shape:", sample_batch['pixel_values'].shape)
+print("Target shape:", sample_batch['labels'].shape)
 
 # COMMAND ----------
 

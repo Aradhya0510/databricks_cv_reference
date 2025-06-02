@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 import mlflow
 from mlflow.tracking import MlflowClient
+import os
 
 def setup_logger(
     name: str,
@@ -15,6 +16,9 @@ def setup_logger(
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
+    # Remove any existing handlers
+    logger.handlers = []
+
     # Create formatter
     formatter = logging.Formatter(format)
 
@@ -23,13 +27,16 @@ def setup_logger(
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # File handler if log_file is provided
-    if log_file:
-        log_path = Path(log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+    # File handler if log_file is provided and not in Databricks notebook
+    if log_file and not os.environ.get('DATABRICKS_RUNTIME_VERSION'):
+        try:
+            log_path = Path(log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        except Exception as e:
+            logger.warning(f"Could not set up file logging: {e}")
 
     return logger
 

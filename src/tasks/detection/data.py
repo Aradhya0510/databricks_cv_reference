@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional, Tuple, Union, List
 from dataclasses import dataclass
+import os
 
 import torch
 from torch.utils.data import DataLoader
@@ -48,7 +49,12 @@ class COCODetectionDataset(torch.utils.data.Dataset):
         
         # Initialize feature extractor if using Hugging Face model
         if model_name:
-            self.feature_extractor = AutoFeatureExtractor.from_pretrained(model_name)
+            with torch.device('cpu'):
+                self.feature_extractor = AutoFeatureExtractor.from_pretrained(
+                    model_name,
+                    device_map=None,
+                    torch_dtype=torch.float32
+                )
         
         # Load class names and create category to index mapping
         self.class_names = [cat["name"] for cat in self.coco.loadCats(self.coco.getCatIds())]
@@ -104,7 +110,7 @@ class COCODetectionDataset(torch.utils.data.Dataset):
                 image,
                 return_tensors="pt",
                 do_resize=True,
-                size=self.image_size,
+                size={"height": self.image_size, "width": self.image_size},
                 do_normalize=True
             )
             return {
@@ -133,7 +139,12 @@ class DetectionDataModule(pl.LightningDataModule):
         
         # Initialize feature extractor if using Hugging Face model
         if config.model_name:
-            self.feature_extractor = AutoFeatureExtractor.from_pretrained(config.model_name)
+            with torch.device('cpu'):
+                self.feature_extractor = AutoFeatureExtractor.from_pretrained(
+                    config.model_name,
+                    device_map=None,
+                    torch_dtype=torch.float32
+                )
             self.transform = None
         else:
             # Define transforms

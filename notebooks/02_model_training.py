@@ -35,9 +35,10 @@ import yaml
 project_root = "/Workspace/Repos/Databricks_CV_ref"
 sys.path.append(project_root)
 
-from src.models.detection import DetectionModel
-from src.models.classification import ClassificationModel
-from src.models.segmentation import SegmentationModel
+# Import project modules
+from src.tasks.detection.model import DetectionModel
+from src.tasks.classification.model import ClassificationModel
+from src.tasks.segmentation.model import SegmentationModel
 from src.training.trainer import UnifiedTrainer
 from src.utils.logging import setup_logger, get_metric_logger
 
@@ -90,16 +91,7 @@ def get_model_class(task: str):
 def initialize_model(task: str, config: dict):
     """Initialize model for the specified task."""
     model_class = get_model_class(task)
-    
-    model = model_class(
-        model_name=config['model']['model_name'],
-        num_classes=config['model']['num_classes'],
-        pretrained=config['model']['pretrained'],
-        learning_rate=config['model']['learning_rate'],
-        weight_decay=config['model']['weight_decay'],
-        scheduler=config['model']['scheduler']
-    )
-    
+    model = model_class(config=config)
     return model
 
 # COMMAND ----------
@@ -111,7 +103,7 @@ def setup_trainer(task: str, model, config: dict, mlflow_logger):
         task=task,
         model=model,
         config=config,
-        mlflow_logger=mlflow_logger
+        data_module_class=get_data_module_class(task)
     )
     
     return trainer
@@ -130,31 +122,45 @@ def train_model(
     # Load configuration
     config = load_task_config(task)
     
-    # Initialize MLflow logger
-    if experiment_name:
-        mlflow_logger = get_metric_logger(experiment_name)
-    else:
-        mlflow_logger = None
-    
     # Initialize model
     model = initialize_model(task, config)
     
     # Log model architecture
     logger.info(f"Model architecture:\n{model}")
     
-    # Setup trainer
-    trainer = setup_trainer(task, model, config, mlflow_logger)
+    # Create data module with config
+    data_config = {
+        'data_path': config['data']['train_path'],
+        'annotation_file': config['data']['train_annotations'],
+        'image_size': config['data'].get('image_size', 640),
+        'batch_size': config['data'].get('batch_size', 8),
+        'num_workers': config['data'].get('num_workers', 4),
+        'model_name': config['model'].get('model_name')
+    }
+    
+    # Initialize data module
+    data_module_class = get_data_module_class(task)
+    data_module = data_module_class(config=data_config)
+    
+    # Set the data loaders directly
+    data_module.train_dataloader = lambda: train_loader
+    data_module.val_dataloader = lambda: val_loader
+    if test_loader:
+        data_module.test_dataloader = lambda: test_loader
+    
+    # Setup trainer with initialized data module
+    trainer = UnifiedTrainer(
+        config=config,
+        model=model,
+        data_module=data_module
+    )
     
     # Train model
-    trainer.fit(
-        train_loader=train_loader,
-        val_loader=val_loader,
-        epochs=config['model']['epochs']
-    )
+    trainer.train()
     
     # Test model if test loader is available
     if test_loader:
-        test_results = trainer.test(test_loader)
+        test_results = trainer.trainer.test(model, datamodule=trainer.data_module)
         
         # Save test results
         results_path = f"{volume_path}/results/{task}_test_results.yaml"
@@ -165,6 +171,23 @@ def train_model(
         logger.info(f"Test results: {test_results}")
     
     return trainer
+
+def get_data_module_class(task: str):
+    """Get the appropriate data module class based on task."""
+    from src.tasks.detection.data import DetectionDataModule
+    from src.tasks.classification.data import ClassificationDataModule
+    from src.tasks.segmentation.data import SegmentationDataModule
+    
+    data_modules = {
+        'detection': DetectionDataModule,
+        'classification': ClassificationDataModule,
+        'segmentation': SegmentationDataModule
+    }
+    
+    if task not in data_modules:
+        raise ValueError(f"Unsupported task: {task}")
+    
+    return data_modules[task]
 
 # COMMAND ----------
 
@@ -178,14 +201,13 @@ mlflow_logger = get_metric_logger(experiment_name)
 
 # Prepare data loaders (from previous notebook)
 from notebook_01_data_preparation import prepare_data
-train_loader, val_loader, test_loader = prepare_data(task)
+train_loader, val_loader = prepare_data(task)
 
 # Train model
 trainer = train_model(
     task=task,
     train_loader=train_loader,
     val_loader=val_loader,
-    test_loader=test_loader,
     experiment_name=experiment_name
 )
 
