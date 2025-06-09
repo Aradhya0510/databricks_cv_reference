@@ -16,7 +16,7 @@ from ray.train.lightning import (
 )
 from ray.tune import TuneConfig
 from ray.tune.schedulers import ASHAScheduler
-from ray.tune.integration.mlflow import MLflowLoggerCallback
+from ray.air.integrations.mlflow import MLflowLoggerCallback
 from pathlib import Path
 import sys
 from typing import Dict, Any, Optional, Union, List, Type
@@ -70,7 +70,8 @@ class UnifiedTrainer:
         self,
         config: Union[Dict[str, Any], UnifiedTrainerConfig],
         model: Optional[pl.LightningModule] = None,
-        data_module: Optional[pl.LightningDataModule] = None
+        data_module: Optional[pl.LightningDataModule] = None,
+        mlflow_logger = None
     ):
         """Initialize the trainer.
         
@@ -78,6 +79,7 @@ class UnifiedTrainer:
             config: Either a UnifiedTrainerConfig object or a dictionary containing the full configuration
             model: Optional pre-initialized model
             data_module: Optional pre-initialized data module
+            mlflow_logger: Optional MLflow logger for metrics tracking
         """
         # Initialize config
         if isinstance(config, dict):
@@ -103,6 +105,7 @@ class UnifiedTrainer:
         self.model = model
         self.data_module = data_module
         self.trainer = None
+        self.mlflow_logger = mlflow_logger
     
     def _init_callbacks(self):
         """Initialize training callbacks."""
@@ -114,7 +117,12 @@ class UnifiedTrainer:
             filename=f"{self.config.task}_{self.config.model_name}_best",
             monitor=self.config.monitor_metric,
             mode=self.config.monitor_mode,
-            save_top_k=self.config.save_top_k
+            save_top_k=self.config.save_top_k,
+            save_last=True,  # Always keep the latest checkpoint
+            save_on_train_epoch_end=False,  # Save on validation epoch end instead
+            enable_version_counter=False,  # Disable version counter to avoid file conflicts
+            save_weights_only=True,  # Only save model weights to reduce storage
+            auto_insert_metric_name=False  # Disable auto-insertion of metric name
         )
         callbacks.append(checkpoint_callback)
         
@@ -147,7 +155,12 @@ class UnifiedTrainer:
                 strategy=RayDDPStrategy(),
                 plugins=[RayLightningEnvironment()],
                 callbacks=callbacks,
-                log_every_n_steps=self.config.log_every_n_steps
+                log_every_n_steps=self.config.log_every_n_steps,
+                sync_batchnorm=True,  # Sync batch norm stats across workers
+                enable_progress_bar=True,
+                enable_model_summary=True,
+                check_val_every_n_epoch=1,
+                num_sanity_val_steps=0  # Disable sanity check to avoid issues
             )
             # Validate trainer configuration
             self.trainer = prepare_trainer(self.trainer)
@@ -155,15 +168,14 @@ class UnifiedTrainer:
             # Local training with PyTorch Lightning
             self.trainer = pl.Trainer(
                 max_epochs=self.config.max_epochs,
-                accelerator="gpu" if self.config.use_gpu else "cpu", # Set accelerator based on config
-                devices="auto",  # Let PL select available GPUs based on accelerator
-                # PyTorch Lightning, with accelerator="gpu" and devices="auto",
-                # will automatically switch to DDP if multiple GPUs are detected and available
-                # and if a suitable strategy (like "ddp_notebook" or "ddp") is provided.
-                # Remove the explicit torch.cuda.device_count() check here to prevent premature CUDA init.
-                strategy="ddp_notebook" if self.config.use_gpu else None, # Use ddp_notebook if use_gpu is true, let PL handle device counting
+                accelerator="gpu" if self.config.use_gpu else "cpu",
+                devices="auto",
+                strategy="ddp_notebook" if self.config.use_gpu else None,
                 callbacks=callbacks,
                 log_every_n_steps=self.config.log_every_n_steps,
+                enable_progress_bar=True,
+                enable_model_summary=True,
+                check_val_every_n_epoch=1
             )
     
     def train(self):
@@ -216,27 +228,24 @@ class UnifiedTrainer:
             self.trainer.fit(self.model, datamodule=self.data_module)
             result = type('Result', (), {'metrics': self.trainer.callback_metrics})
         
-        # Log results to MLflow
-        with mlflow.start_run(
-            run_name=self.config.run_name or f"{self.config.task}_training",
-            experiment_name=self.config.experiment_name
-        ) as run:
-            # Log metrics
-            mlflow.log_metrics(result.metrics)
-            
-            # Log model
-            mlflow.pytorch.log_model(
-                self.model,
-                artifact_path="model",
-                registered_model_name=f"{self.config.task}_{self.config.model_name}"
-            )
+        # Log additional metrics and artifacts if custom logger is provided
+        if self.mlflow_logger:
+            # Log additional training info
+            self.mlflow_logger.log_params({
+                "task": self.config.task,
+                "model_name": self.config.model_name,
+                "max_epochs": self.config.max_epochs,
+                "batch_size": self.data_module.config.batch_size,
+                "num_gpus": torch.cuda.device_count() if self.config.use_gpu else 0,
+                "strategy": "ddp_notebook" if self.config.use_gpu else "single_gpu"
+            })
             
             # Log checkpoint
             if self.config.distributed:
                 checkpoint_path = result.checkpoint.path
             else:
                 checkpoint_path = self.trainer.checkpoint_callback.best_model_path
-            mlflow.log_artifact(checkpoint_path)
+            self.mlflow_logger.log_artifact(checkpoint_path)
         
         return result
     
