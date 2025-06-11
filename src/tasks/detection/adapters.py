@@ -18,7 +18,7 @@ class OutputAdapter(ABC):
         pass
     
     @abstractmethod
-    def adapt_targets(self, targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def adapt_targets(self, targets: Dict[str, Any]) -> Dict[str, Any]:
         """Adapt targets to model-specific format.
         
         Args:
@@ -78,56 +78,48 @@ class DETROutputAdapter(OutputAdapter):
             "loss_dict": outputs.loss_dict
         }
     
-    def adapt_targets(self, targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Adapt targets to DETR format.
+    def adapt_targets(self, targets: Dict[str, Any]) -> Dict[str, Any]:
+        """Adapt targets to the format expected by DETR.
         
         Args:
-            targets: Standard format targets
-            
+            targets: Dictionary containing:
+                - boxes: List of bounding box tensors
+                - class_labels: List of class label tensors
+                - image_id: Tensor of image IDs
+        
         Returns:
-            Adapted targets in model-specific format
+            List of target dictionaries in DETR format
         """
-        # Convert targets to list of dictionaries
-        target_list = []
-        current_image_id = targets["image_id"][0]
-        current_boxes = []
-        current_labels = []
+        adapted_targets = []
         
-        # Get the minimum length to avoid index out of bounds
-        min_length = min(
-            len(targets["boxes"]),
-            len(targets["image_id"]),
-            len(targets["class_labels"])
-        )
+        # Get the number of images in the batch
+        num_images = len(targets["boxes"])
         
-        for i in range(min_length):
-            if i > 0 and targets["image_id"][i] != current_image_id:
-                # Add previous image's targets
-                target_list.append({
-                    "boxes": torch.stack(current_boxes),
-                    "labels": torch.stack(current_labels),
-                    "class_labels": torch.stack(current_labels)  # Keep both keys for compatibility
-                })
-                # Start new image
-                current_image_id = targets["image_id"][i]
-                current_boxes = []
-                current_labels = []
+        for i in range(num_images):
+            # Get current image's boxes and labels
+            boxes = targets["boxes"][i]
+            class_labels = targets["class_labels"][i]
+            image_id = targets["image_id"][i]
             
-            # Convert corner format to center format for DETR
-            box = targets["boxes"][i]
-            center_box = self._corner_to_center(box)
-            current_boxes.append(center_box)
-            current_labels.append(targets["class_labels"][i])
+            # Handle empty boxes
+            if len(boxes) == 0:
+                # Create empty tensors with correct shape
+                boxes = torch.zeros((0, 4), dtype=torch.float32, device=boxes.device)
+                class_labels = torch.zeros(0, dtype=torch.int64, device=class_labels.device)
+            else:
+                # Convert boxes to center format for DETR
+                boxes = self._corner_to_center(boxes)
+            
+            # Create target dictionary for current image
+            target = {
+                "boxes": boxes,
+                "class_labels": class_labels,  # Keep original key for DETR
+                "labels": class_labels,  # Add labels key for compatibility
+                "image_id": image_id
+            }
+            adapted_targets.append(target)
         
-        # Add last image's targets
-        if current_boxes:
-            target_list.append({
-                "boxes": torch.stack(current_boxes),
-                "labels": torch.stack(current_labels),
-                "class_labels": torch.stack(current_labels)  # Keep both keys for compatibility
-            })
-        
-        return target_list
+        return adapted_targets
     
     def format_predictions(self, outputs: Dict[str, Any]) -> List[Dict[str, torch.Tensor]]:
         """Format DETR outputs for metric computation.
@@ -144,6 +136,18 @@ class DETROutputAdapter(OutputAdapter):
             boxes = outputs["pred_boxes"][i]
             logits = outputs["pred_logits"][i]
             
+            # Handle empty predictions
+            if len(boxes) == 0:
+                preds.append({
+                    "boxes": torch.zeros((0, 4), dtype=torch.float32, device=boxes.device),
+                    "scores": torch.zeros(0, dtype=torch.float32, device=logits.device),
+                    "labels": torch.zeros(0, dtype=torch.int64, device=logits.device)
+                })
+                continue
+            
+            # Convert boxes from center format to corner format for mAP
+            boxes = self._center_to_corner(boxes)
+            
             # Compute scores and labels
             scores = logits.softmax(dim=-1)[..., :-1].max(dim=-1)[0]
             labels = logits.softmax(dim=-1)[..., :-1].argmax(dim=-1)
@@ -155,50 +159,42 @@ class DETROutputAdapter(OutputAdapter):
             })
         return preds
     
-    def format_targets(self, targets: Dict[str, torch.Tensor]) -> List[Dict[str, torch.Tensor]]:
+    def format_targets(self, targets: Dict[str, Any]) -> List[Dict[str, torch.Tensor]]:
         """Format targets for metric computation.
         
         Args:
-            targets: Standard format targets
-            
+            targets: Dictionary containing:
+                - boxes: List of bounding box tensors
+                - class_labels: List of class label tensors
+                - image_id: Tensor of image IDs
+        
         Returns:
             List of target dictionaries for each image
         """
-        # Convert targets to list of dictionaries
         target_list = []
-        current_image_id = targets["image_id"][0]
-        current_boxes = []
-        current_labels = []
         
-        # Get the minimum length to avoid index out of bounds
-        min_length = min(
-            len(targets["boxes"]),
-            len(targets["image_id"]),
-            len(targets["class_labels"])
-        )
+        # Get the number of images in the batch
+        num_images = len(targets["boxes"])
         
-        for i in range(min_length):
-            if i > 0 and targets["image_id"][i] != current_image_id:
-                # Add previous image's targets
-                target_list.append({
-                    "boxes": torch.stack(current_boxes),
-                    "labels": torch.stack(current_labels),
-                    "class_labels": torch.stack(current_labels)  # Keep both keys for compatibility
-                })
-                # Start new image
-                current_image_id = targets["image_id"][i]
-                current_boxes = []
-                current_labels = []
+        for i in range(num_images):
+            # Get current image's boxes and labels
+            boxes = targets["boxes"][i]
+            class_labels = targets["class_labels"][i]
             
-            current_boxes.append(targets["boxes"][i])
-            current_labels.append(targets["class_labels"][i])
-        
-        # Add last image's targets
-        if current_boxes:
+            # Handle empty boxes
+            if len(boxes) == 0:
+                target_list.append({
+                    "boxes": torch.zeros((0, 4), dtype=torch.float32, device=boxes.device),
+                    "labels": torch.zeros(0, dtype=torch.int64, device=class_labels.device)
+                })
+                continue
+            
+            # Convert boxes from center format to corner format for mAP
+            boxes = self._center_to_corner(boxes)
+            
             target_list.append({
-                "boxes": torch.stack(current_boxes),
-                "labels": torch.stack(current_labels),
-                "class_labels": torch.stack(current_labels)  # Keep both keys for compatibility
+                "boxes": boxes,
+                "labels": class_labels
             })
         
         return target_list

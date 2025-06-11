@@ -1,59 +1,152 @@
-# Databricks Computer Vision Reference Architecture
+# Databricks Computer Vision Architecture
 
-## Project Overview
+An advanced, modular, and extensible reference architecture designed to simplify the adoption and deployment of sophisticated computer vision pipelines. This architecture leverages standard frameworks and protocols, promoting consistent and efficient workflows by integrating Databricks with PyTorch Lightning for structured model training, Ray for distributed computation and hyperparameter optimization, Hugging Face Transformers for a standardized, robust model repository, MLflow for uniform experiment tracking and model logging, Albumentations for consistent and effective data augmentation, and PyCOCOTools for standardized data annotations and management.
 
-This project provides a comprehensive reference architecture for implementing computer vision solutions in Databricks. It is designed to bridge the gap between cutting-edge computer vision research and practical business applications by providing:
+---
 
-1. **Accessibility**: A user-friendly interface through Databricks notebooks that allows non-technical users to leverage state-of-the-art computer vision models without deep ML expertise.
+## 🎯 Why This Project?
 
-2. **Best Practices**: A robust backend implementation that incorporates industry best practices for:
-   - Model training and evaluation
-   - Data preprocessing and augmentation
-   - Hyperparameter tuning
-   - Model deployment and monitoring
-   - Experiment tracking and model versioning
+Implementing production-ready computer vision solutions can be complex. This architecture aims to:
 
-3. **Extensibility**: A modular architecture that makes it easy to:
-   - Add new model architectures
-   - Support new datasets
-   - Implement custom training routines
-   - Integrate with existing ML pipelines
+* **Simplify Deployment:** Abstract the complexities of distributed training, hyperparameter tuning, model tracking, and monitoring.
+* **Best Practices:** Integrate industry-leading tools and frameworks to ensure scalability, reproducibility, and maintainability.
+* **Ease of Adoption:** Provide clear, structured, and easy-to-follow workflows for rapid development and deployment.
 
-## Technology Stack
+---
 
-The project leverages a carefully selected set of technologies to provide a modern, well-supported, and scalable solution:
+## 🚀 Technology Stack and Its Significance
 
-1. **MS COCO Dataset Format**
-   - Industry standard format for computer vision tasks
-   - Comprehensive annotation support for multiple tasks
-   - Extensive tooling and community support
-   - Easy conversion from other formats
+The architecture integrates standardized frameworks and tools to achieve a robust and maintainable computer vision pipeline:
 
-2. **Hugging Face Transformers**
-   - State-of-the-art model architectures
-   - Regular updates with latest research
-   - Extensive model hub with pretrained weights
-   - Consistent API across different models
+* **PyTorch Lightning**: Establishes a standardized protocol for model training, validation, and testing, reducing boilerplate code and ensuring reproducibility through structured code.
 
-3. **PyTorch Lightning**
-   - Clean, modular training code
-   - Built-in support for best practices
-   - Easy local training setup
-   - Seamless integration with distributed training
+* **Ray**: Provides standardized and scalable distributed training and hyperparameter tuning capabilities, crucial for leveraging large-scale computing clusters efficiently.
 
-4. **Ray**
-   - Distributed training and hyperparameter tuning
-   - Efficient resource utilization
-   - Scalable to large clusters
-   - Integration with Databricks
+* **Hugging Face Transformers**: Serves as a unified model repository offering well-established architectures and pretrained models, ensuring rapid integration and deployment of state-of-the-art models such as DETR and YOLO.
 
-5. **MLflow**
-   - Experiment tracking and logging
-   - Model versioning and registration
-   - Integration with Unity Catalog
-   - Reproducible experiments
+* **MLflow**: Implements a uniform system for experiment tracking, logging metrics, and managing model versions, enhancing reproducibility, traceability, and deployment readiness.
 
-## Getting Started
+* **Albumentations**: Provides standardized data augmentation techniques to enhance model generalization, consistency, and performance across diverse datasets.
+
+* **PyCOCOTools**: Standardizes data annotation and management using the widely recognized COCO format, enabling consistent data handling, evaluation metrics, and interoperability across datasets and tasks.
+
+---
+
+## 🧩 Modularity and Extensibility
+
+The project emphasizes modularity and extensibility through clear abstractions:
+
+* **UnifiedTrainer**: Abstracts training logic, seamlessly managing local and distributed environments.
+* **DetectionModel & DataModule**: Separately handle data and model logic, promoting independent maintenance and ease of integration.
+* **Output Adapters**: Facilitate straightforward integration of new Hugging Face models, enabling easy extension of the architecture.
+
+---
+
+## 🔧 How to Introduce New Models via Adapters
+
+To integrate a new Hugging Face detection model into this architecture, follow these steps:
+
+### Step 1: Create a New Adapter
+
+Implement the `OutputAdapter` abstract class to facilitate integration of new Hugging Face models. This abstraction standardizes interactions with different model architectures, enabling new models to seamlessly plug into the existing workflow without requiring refactoring of the core `model.py` or `data.py` files.
+
+Each method within `OutputAdapter` serves a specific and crucial purpose:
+
+* **`adapt_output(outputs)`**: Converts the raw outputs from your model into a standardized format expected by the training pipeline (e.g., bounding boxes format). This ensures compatibility across different model outputs.
+
+* **`adapt_targets(targets)`**: Transforms the target annotations into the format required by your model during training. This standardizes how ground truth data is fed into models, irrespective of individual model-specific requirements.
+
+* **`format_predictions(outputs)`**: Structures model predictions for metric computations such as mean Average Precision (mAP). This method ensures consistency in how evaluation metrics are computed and interpreted across different model types.
+
+* **`format_targets(targets)`**: Formats the target annotations to match the standardized metric computation format. This guarantees consistent evaluation against ground truths.
+
+Example:
+
+```python
+from adapter import OutputAdapter
+
+class YourModelOutputAdapter(OutputAdapter):
+    def adapt_output(self, outputs):
+        # Convert model-specific outputs into standardized dictionary format
+        standardized_outputs = {
+            "boxes": outputs["boxes"],
+            "logits": outputs["scores"],
+            "loss": outputs.get("loss"),
+        }
+        return standardized_outputs
+
+    def adapt_targets(self, targets):
+        # Format targets into your model's required structure
+        model_targets = [{
+            "labels": t["class_labels"],
+            "boxes": t["boxes"]
+        } for t in targets]
+        return model_targets
+
+    def format_predictions(self, outputs):
+        # Format predictions for metric computations
+        predictions = [{
+            "boxes": output["boxes"],
+            "scores": output["logits"].max(dim=1).values,
+            "labels": output["logits"].argmax(dim=1)
+        } for output in outputs]
+        return predictions
+
+    def format_targets(self, targets):
+        # Ensure targets are correctly formatted for metrics
+        formatted_targets = [{
+            "boxes": t["boxes"],
+            "labels": t["class_labels"]
+        } for t in targets]
+        return formatted_targets
+```
+
+### Step 2: Register Your Adapter
+
+Update the adapter factory:
+
+```python
+def get_output_adapter(model_name: str) -> OutputAdapter:
+    if "your_model_name" in model_name.lower():
+        return YourModelOutputAdapter()
+    elif "detr" in model_name.lower():
+        return DETROutputAdapter()
+    # Add other models similarly
+```
+
+### Step 3: Configure Your Model
+
+Create a new configuration in your YAML config:
+
+```yaml
+model:
+  task_type: detection
+  model_name: your_model_identifier
+  num_classes: 80
+```
+
+---
+
+## 🚦 Getting Started
+
+Clone the repository into your Databricks workspace:
+
+```bash
+git clone https://github.com/Aradhya0510/databricks-cv-architecture.git
+cd databricks-cv-architecture
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Explore the provided notebooks to:
+
+* Set up the required Unity Catalog schema and volume.
+* Build your dataset and dataloaders tailored for training.
+* Conduct model training, evaluation, and deployment.
 
 The project includes a series of notebooks that demonstrate the complete workflow for training a DETR (DEtection TRansformer) model on the COCO 2017 dataset:
 
@@ -73,18 +166,27 @@ These notebooks provide a step-by-step guide to:
 - Registering and deploying models
 - Monitoring model performance
 
-## Project Structure
+Walk through these notebooks sequentially to familiarize yourself with the end-to-end workflow, and feel encouraged to adapt and customize them for your specific use cases.
 
-```
-Databricks_CV_ref/
-├── notebooks/           # Example notebooks
-├── src/                # Source code
-│   ├── tasks/         # Task-specific implementations
-│   ├── training/      # Training utilities
-│   └── data/          # Data handling utilities
-├── tests/             # Unit tests
-└── docs/              # Documentation
-```
+---
+
+## 🌱 Future Directions
+
+* Expand adapters for segmentation and classification tasks.
+* Enhance support for more diverse data formats.
+* Introduce plugin-based adapter registry for easier extensibility.
+
+---
+
+## 📚 Documentation & Contributions
+
+Contributions are welcomed! Please document thoroughly and maintain consistent coding standards when contributing.
+
+---
+
+### 📬 Questions & Feedback
+
+Reach out via GitHub issues or email for support and suggestions!
 
 ## Contributing
 

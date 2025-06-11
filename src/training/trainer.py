@@ -221,15 +221,20 @@ class UnifiedTrainer:
                 )
             )
             
-            # Create Ray trainer
-            ray_trainer = TorchTrainer(
-                lambda: self.trainer.fit(self.model, datamodule=self.data_module),
+            # Create Ray trainer with proper Lightning integration
+            from ray.train.lightning import LightningTrainer
+            
+            ray_trainer = LightningTrainer(
+                trainer=self.trainer,
                 scaling_config=scaling_config,
                 run_config=run_config
             )
             
             # Start training
-            result = ray_trainer.fit()
+            result = ray_trainer.fit(
+                model=self.model,
+                datamodule=self.data_module
+            )
         else:
             # Local training
             self.trainer.fit(self.model, datamodule=self.data_module)

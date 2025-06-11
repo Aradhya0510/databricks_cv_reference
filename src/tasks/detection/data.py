@@ -239,25 +239,47 @@ class DetectionDataModule(pl.LightningDataModule):
     
     @staticmethod
     def _collate_fn(batch):
-        images = []
-        targets = []
-        for sample in batch:
-            images.append(sample["pixel_values"])
-            targets.append(sample["labels"])
+        """Collate function for object detection.
         
+        Args:
+            batch: List of samples, each containing:
+                - pixel_values: Image tensor
+                - labels: Dictionary containing:
+                    - boxes: Bounding box coordinates
+                    - class_labels: Class labels
+                    - image_id: Image identifier
+        
+        Returns:
+            Dictionary containing:
+                - pixel_values: Stacked image tensors
+                - labels: Dictionary containing:
+                    - boxes: List of bounding box tensors
+                    - class_labels: List of class label tensors
+                    - image_id: Tensor of image IDs
+        """
         # Stack images
-        images = torch.stack(images)
+        images = torch.stack([sample["pixel_values"] for sample in batch])
         
-        # Collate targets
-        collated_targets = {
-            "boxes": torch.cat([t["boxes"] for t in targets]),
-            "class_labels": torch.cat([t["class_labels"] for t in targets]),
-            "image_id": torch.cat([t["image_id"] for t in targets])
-        }
+        # Collect all boxes, labels, and image IDs
+        boxes = []
+        class_labels = []
+        image_ids = []
+        
+        for sample in batch:
+            boxes.append(sample["labels"]["boxes"])
+            class_labels.append(sample["labels"]["class_labels"])
+            image_ids.append(sample["labels"]["image_id"])
+        
+        # Stack image IDs
+        image_ids = torch.cat(image_ids)
         
         return {
             "pixel_values": images,
-            "labels": collated_targets
+            "labels": {
+                "boxes": boxes,
+                "class_labels": class_labels,
+                "image_id": image_ids
+            }
         }
     
     @property
