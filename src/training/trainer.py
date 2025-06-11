@@ -71,7 +71,7 @@ class UnifiedTrainer:
         config: Union[Dict[str, Any], UnifiedTrainerConfig],
         model: Optional[pl.LightningModule] = None,
         data_module: Optional[pl.LightningDataModule] = None,
-        mlflow_logger = None
+        logger: Optional[pl.loggers.Logger] = None
     ):
         """Initialize the trainer.
         
@@ -79,7 +79,7 @@ class UnifiedTrainer:
             config: Either a UnifiedTrainerConfig object or a dictionary containing the full configuration
             model: Optional pre-initialized model
             data_module: Optional pre-initialized data module
-            mlflow_logger: Optional MLflow logger for metrics tracking
+            logger: Optional PyTorch Lightning logger for metrics tracking
         """
         # Initialize config
         if isinstance(config, dict):
@@ -105,7 +105,7 @@ class UnifiedTrainer:
         self.model = model
         self.data_module = data_module
         self.trainer = None
-        self.mlflow_logger = mlflow_logger
+        self.logger = logger
     
     def _init_callbacks(self):
         """Initialize training callbacks."""
@@ -160,7 +160,8 @@ class UnifiedTrainer:
                 enable_progress_bar=True,
                 enable_model_summary=True,
                 check_val_every_n_epoch=1,
-                num_sanity_val_steps=0  # Disable sanity check to avoid issues
+                num_sanity_val_steps=0,  # Disable sanity check to avoid issues
+                logger=self.logger  # Use the provided logger
             )
             # Validate trainer configuration
             self.trainer = prepare_trainer(self.trainer)
@@ -169,13 +170,19 @@ class UnifiedTrainer:
             self.trainer = pl.Trainer(
                 max_epochs=self.config.max_epochs,
                 accelerator="gpu" if self.config.use_gpu else "cpu",
-                devices="auto",
-                strategy="ddp_notebook" if self.config.use_gpu else None,
+                devices=self.config.num_workers if self.config.use_gpu else 1,
+                strategy="ddp_notebook" if self.config.use_gpu and self.config.num_workers > 1 else None,
                 callbacks=callbacks,
                 log_every_n_steps=self.config.log_every_n_steps,
                 enable_progress_bar=True,
                 enable_model_summary=True,
-                check_val_every_n_epoch=1
+                check_val_every_n_epoch=1,
+                logger=self.logger,  # Use the provided logger
+                limit_train_batches=None,  # Train on all batches
+                limit_val_batches=None,  # Validate on all batches
+                limit_test_batches=None,  # Test on all batches
+                deterministic=False,  # Allow non-deterministic behavior for better performance
+                benchmark=True  # Enable cuDNN benchmarking for better performance
             )
     
     def train(self):
@@ -227,25 +234,6 @@ class UnifiedTrainer:
             # Local training
             self.trainer.fit(self.model, datamodule=self.data_module)
             result = type('Result', (), {'metrics': self.trainer.callback_metrics})
-        
-        # Log additional metrics and artifacts if custom logger is provided
-        if self.mlflow_logger:
-            # Log additional training info
-            self.mlflow_logger.log_params({
-                "task": self.config.task,
-                "model_name": self.config.model_name,
-                "max_epochs": self.config.max_epochs,
-                "batch_size": self.data_module.config.batch_size,
-                "num_gpus": torch.cuda.device_count() if self.config.use_gpu else 0,
-                "strategy": "ddp_notebook" if self.config.use_gpu else "single_gpu"
-            })
-            
-            # Log checkpoint
-            if self.config.distributed:
-                checkpoint_path = result.checkpoint.path
-            else:
-                checkpoint_path = self.trainer.checkpoint_callback.best_model_path
-            self.mlflow_logger.log_artifact(checkpoint_path)
         
         return result
     

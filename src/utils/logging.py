@@ -3,8 +3,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 import mlflow
-from mlflow.tracking import MlflowClient
-import os
+from lightning.pytorch.loggers import MLFlowLogger
 
 def setup_logger(
     name: str,
@@ -27,8 +26,8 @@ def setup_logger(
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # File handler if log_file is provided and not in Databricks notebook
-    if log_file and not os.environ.get('DATABRICKS_RUNTIME_VERSION'):
+    # File handler if log_file is provided
+    if log_file:
         try:
             log_path = Path(log_file)
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,57 +39,29 @@ def setup_logger(
 
     return logger
 
-class MLflowLogger:
-    """Wrapper for MLflow logging functionality."""
+def get_mlflow_logger(
+    experiment_name: str,
+    tracking_uri: Optional[str] = None,
+    run_name: Optional[str] = None,
+    log_model: bool = True,
+    tags: Optional[dict] = None
+) -> MLFlowLogger:
+    """Get MLflow logger for PyTorch Lightning.
     
-    def __init__(self, experiment_name: str):
-        self.client = MlflowClient()
-        self.experiment_name = experiment_name
-        self._setup_experiment()
-
-    def _setup_experiment(self):
-        """Set up MLflow experiment."""
-        experiment = self.client.get_experiment_by_name(self.experiment_name)
-        if experiment is None:
-            experiment_id = self.client.create_experiment(self.experiment_name)
-        else:
-            experiment_id = experiment.experiment_id
-        mlflow.set_experiment(experiment_id=experiment_id)
-
-    def log_params(self, params: dict):
-        """Log parameters to MLflow."""
-        mlflow.log_params(params)
-
-    def log_metrics(self, metrics: dict, step: Optional[int] = None):
-        """Log metrics to MLflow."""
-        mlflow.log_metrics(metrics, step=step)
-
-    def log_artifact(self, local_path: str, artifact_path: Optional[str] = None):
-        """Log artifact to MLflow."""
-        mlflow.log_artifact(local_path, artifact_path)
-
-    def log_model(self, model, artifact_path: str):
-        """Log model to MLflow."""
-        mlflow.pytorch.log_model(model, artifact_path)
-
-    def end_run(self):
-        """End the current MLflow run."""
-        mlflow.end_run()
-
-def get_metric_logger(experiment_name: str) -> MLflowLogger:
-    """Get MLflow logger for metrics."""
-    return MLflowLogger(experiment_name)
-
-def log_training_progress(
-    logger: logging.Logger,
-    epoch: int,
-    metrics: dict,
-    mlflow_logger: Optional[MLflowLogger] = None
-):
-    """Log training progress to both console and MLflow."""
-    # Log to console
-    logger.info(f"Epoch {epoch}: {metrics}")
-
-    # Log to MLflow if logger is provided
-    if mlflow_logger:
-        mlflow_logger.log_metrics(metrics, step=epoch) 
+    Args:
+        experiment_name: Name of the MLflow experiment
+        tracking_uri: MLflow tracking server URI
+        run_name: Name of the MLflow run
+        log_model: Whether to log model checkpoints
+        tags: Additional tags for the run
+        
+    Returns:
+        MLFlowLogger instance
+    """
+    return MLFlowLogger(
+        experiment_name=experiment_name,
+        tracking_uri=tracking_uri,
+        run_name=run_name,
+        log_model=log_model,
+        tags=tags
+    ) 

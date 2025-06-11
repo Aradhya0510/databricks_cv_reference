@@ -40,7 +40,7 @@ from src.tasks.detection.model import DetectionModel
 from src.tasks.classification.model import ClassificationModel
 from src.tasks.segmentation.model import SegmentationModel
 from src.training.trainer import UnifiedTrainer
-from src.utils.logging import setup_logger, get_metric_logger
+from src.utils.logging import setup_logger, get_mlflow_logger
 
 # COMMAND ----------
 
@@ -59,18 +59,17 @@ logger = setup_logger(
 
 # DBTITLE 1,Setup MLflow
 def setup_mlflow(experiment_name: str):
-    """Setup MLflow experiment and enable autologging."""
-    # Set the experiment
-    experiment = mlflow.set_experiment(experiment_name)
-    
-    # Enable autologging
-    mlflow.pytorch.autolog(
-        log_every_n_epoch=1,  # Log metrics every epoch
-        log_models=True,      # Log model checkpoints
-        registered_model_name=None  # Don't register models automatically
+    """Setup MLflow experiment and logger."""
+    # Get MLflow logger
+    mlflow_logger = get_mlflow_logger(
+        experiment_name=experiment_name,
+        tracking_uri=os.getenv("MLFLOW_TRACKING_URI"),
+        run_name=f"training_run_{os.getenv('USER')}",
+        log_model=True,
+        tags={"framework": "pytorch_lightning"}
     )
     
-    return experiment
+    return mlflow_logger
 
 # COMMAND ----------
 
@@ -133,8 +132,7 @@ def train_model(
     train_loader,
     val_loader,
     test_loader=None,
-    experiment_name: str = None,
-    mlflow_logger = None
+    experiment_name: str = None
 ):
     """Main function to train the model."""
     # Load configuration
@@ -166,46 +164,31 @@ def train_model(
     if test_loader:
         data_module.test_dataloader = lambda: test_loader
     
+    # Setup MLflow logger
+    mlflow_logger = setup_mlflow(experiment_name)
+    
     # Setup trainer with initialized data module
     trainer = UnifiedTrainer(
         config=config,
         model=model,
         data_module=data_module,
-        mlflow_logger=mlflow_logger
+        logger=mlflow_logger  # Pass the MLflow logger to the trainer
     )
     
-    # Start MLflow run
-    with mlflow.start_run(
-        run_name=f"{task}_{config['model']['model_name']}",
-        nested=True  # Allow nested runs for distributed training
-    ) as run:
-        # Log configuration
-        mlflow.log_params({
-            "task": task,
-            "model_name": config['model']['model_name'],
-            "batch_size": data_config['batch_size'],
-            "image_size": data_config['image_size'],
-            "num_workers": data_config['num_workers']
-        })
+    # Train model
+    trainer.train()
+    
+    # Test model if test loader is available
+    if test_loader:
+        test_results = trainer.trainer.test(model, datamodule=trainer.data_module)
         
-        # Train model
-        trainer.train()
+        # Save test results
+        results_path = f"{volume_path}/results/{task}_test_results.yaml"
+        os.makedirs(os.path.dirname(results_path), exist_ok=True)
+        with open(results_path, 'w') as f:
+            yaml.dump(test_results, f)
         
-        # Test model if test loader is available
-        if test_loader:
-            test_results = trainer.trainer.test(model, datamodule=trainer.data_module)
-            
-            # Save test results
-            results_path = f"{volume_path}/results/{task}_test_results.yaml"
-            os.makedirs(os.path.dirname(results_path), exist_ok=True)
-            with open(results_path, 'w') as f:
-                yaml.dump(test_results, f)
-            
-            # Log test results
-            mlflow.log_metrics(test_results)
-            mlflow.log_artifact(results_path)
-            
-            logger.info(f"Test results: {test_results}")
+        logger.info(f"Test results: {test_results}")
     
     return trainer
 
@@ -234,11 +217,8 @@ task = "detection"
 experiment_name = f"/Users/{dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get()}/{task}_pipeline"
 
 # Setup MLflow experiment and autologging
-experiment = setup_mlflow(experiment_name)
-print(f"Using MLflow experiment: {experiment.name}")
-
-# Initialize MLflow logger
-mlflow_logger = get_metric_logger(experiment_name)
+mlflow_logger = setup_mlflow(experiment_name)
+print(f"Using MLflow experiment: {experiment_name}")
 
 # Prepare data loaders (from previous notebook)
 from notebook_01_data_preparation import prepare_data
@@ -249,8 +229,7 @@ trainer = train_model(
     task=task,
     train_loader=train_loader,
     val_loader=val_loader,
-    experiment_name=experiment_name,
-    mlflow_logger=mlflow_logger
+    experiment_name=experiment_name
 )
 
 # COMMAND ----------

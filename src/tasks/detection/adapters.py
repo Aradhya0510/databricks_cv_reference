@@ -65,9 +65,15 @@ class DETROutputAdapter(OutputAdapter):
         Returns:
             Adapted outputs in standard format
         """
+        # Convert center format boxes to corner format
+        pred_boxes = outputs.pred_boxes
+        if pred_boxes is not None:
+            # Convert from [center_x, center_y, width, height] to [x0, y0, x1, y1]
+            pred_boxes = self._center_to_corner(pred_boxes)
+        
         return {
             "loss": outputs.loss,
-            "pred_boxes": outputs.pred_boxes,
+            "pred_boxes": pred_boxes,
             "pred_logits": outputs.logits,
             "loss_dict": outputs.loss_dict
         }
@@ -107,7 +113,10 @@ class DETROutputAdapter(OutputAdapter):
                 current_boxes = []
                 current_labels = []
             
-            current_boxes.append(targets["boxes"][i])
+            # Convert corner format to center format for DETR
+            box = targets["boxes"][i]
+            center_box = self._corner_to_center(box)
+            current_boxes.append(center_box)
             current_labels.append(targets["class_labels"][i])
         
         # Add last image's targets
@@ -131,10 +140,18 @@ class DETROutputAdapter(OutputAdapter):
         """
         preds = []
         for i in range(len(outputs["pred_boxes"])):
+            # Ensure tensors are on the same device
+            boxes = outputs["pred_boxes"][i]
+            logits = outputs["pred_logits"][i]
+            
+            # Compute scores and labels
+            scores = logits.softmax(dim=-1)[..., :-1].max(dim=-1)[0]
+            labels = logits.softmax(dim=-1)[..., :-1].argmax(dim=-1)
+            
             preds.append({
-                "boxes": outputs["pred_boxes"][i],
-                "scores": outputs["pred_logits"][i].softmax(dim=-1)[..., :-1].max(dim=-1)[0],
-                "labels": outputs["pred_logits"][i].softmax(dim=-1)[..., :-1].argmax(dim=-1)
+                "boxes": boxes,
+                "scores": scores,
+                "labels": labels
             })
         return preds
     
@@ -185,6 +202,38 @@ class DETROutputAdapter(OutputAdapter):
             })
         
         return target_list
+    
+    def _center_to_corner(self, boxes: torch.Tensor) -> torch.Tensor:
+        """Convert boxes from [center_x, center_y, width, height] to [x0, y0, x1, y1] format.
+        
+        Args:
+            boxes: Boxes in center format
+            
+        Returns:
+            Boxes in corner format
+        """
+        x_center, y_center, width, height = boxes.unbind(-1)
+        x0 = x_center - width / 2
+        y0 = y_center - height / 2
+        x1 = x_center + width / 2
+        y1 = y_center + height / 2
+        return torch.stack([x0, y0, x1, y1], dim=-1)
+    
+    def _corner_to_center(self, boxes: torch.Tensor) -> torch.Tensor:
+        """Convert boxes from [x0, y0, x1, y1] to [center_x, center_y, width, height] format.
+        
+        Args:
+            boxes: Boxes in corner format
+            
+        Returns:
+            Boxes in center format
+        """
+        x0, y0, x1, y1 = boxes.unbind(-1)
+        center_x = (x0 + x1) / 2
+        center_y = (y0 + y1) / 2
+        width = x1 - x0
+        height = y1 - y0
+        return torch.stack([center_x, center_y, width, height], dim=-1)
 
 class YOLOOutputAdapter(OutputAdapter):
     """Adapter for YOLO model outputs."""
